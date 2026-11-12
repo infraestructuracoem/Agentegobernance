@@ -1,0 +1,24 @@
+import os
+
+FUNCTION_APP_NAME = "func-gobernanza-core-v"
+CORREO_NOTIFICACIONES_TI = "bcruzn@coem.co"
+GRUPO_GOBERNANZA_ID = "ba8dc0c6-368c-41fa-a222-67434d2ec16c"
+UMBRAL_RIESGO_ALTO = 70
+
+TENANT_ID = os.environ.get("TENANT_ID") or os.environ.get("AZURE_TENANT_ID", "")
+CLIENT_ID = os.environ.get("CLIENT_ID") or os.environ.get("AZURE_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("CLIENT_SECRET") or os.environ.get("AZURE_CLIENT_SECRET", "")
+
+PALABRAS_PROHIBIDAS = [
+    "ignore previous instructions", "bypass", "jailbreak", "prompt injection", "system prompt",
+    "password", "passwords", "contrasena", "contrasenas", "credencial", "credenciales",
+    "secret", "token", "api_key", "clave", "claves", "pin", "llave", "login",
+    "drop table", "exploit", "malware", "pirata", "torrent", "hack",
+    "tarjeta", "pii", "sensible", "confidencial", "ilegal", "secreto",
+    "streaming no autorizado", "apuestas", "juegos"
+]
+
+PERMISOS_ALTO_IMPACTO = (
+    "mail.", "files.", "directory.", "sites.", "user.readwrite",
+    "rolemanagement", "application.readwrite", "appRoleAssignment"
+)

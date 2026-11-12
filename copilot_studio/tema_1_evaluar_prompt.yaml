@@ -1,0 +1,27 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: tema_evaluar_prompt_dlp
+  intent:
+    triggerQueries:
+      - evaluar prompt
+      - validar consulta dlp
+      - revisar seguridad de prompt
+  actions:
+    - kind: Question
+      id: pedir_prompt
+      alwaysPrompt: true
+      variable: Topic.PromptEvaluar
+      prompt: "Ingresa el prompt o instrucción que deseas validar contra las políticas DLP:"
+
+    - kind: InvokeConnectorAction
+      id: invocar_evaluate_prompt
+      connectionReference: AI_Gateway_Gobernanza
+      operationId: evaluate-prompt
+      inputs:
+        body: ={ prompt: Topic.PromptEvaluar, userId: System.User.Email }
+      outputResult: Topic.ResDLP
+
+    - kind: SendActivity
+      id: mostrar_dictamen_dlp
+      activity: "{Topic.ResDLP.respuestaEjecutiva}"

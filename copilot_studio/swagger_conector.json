@@ -1,0 +1,191 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "AI_Gateway_Gobernanza",
+    "description": "Gateway de Gobernanza de IA - 5 Endpoints Integrados",
+    "version": "2.2"
+  },
+  "host": "func-gobernanza-core-v-avfqdnedb2e2g5c2.eastus-01.azurewebsites.net",
+  "basePath": "/api",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/evaluate-prompt": {
+      "post": {
+        "summary": "Evaluar Prompt DLP",
+        "operationId": "evaluate-prompt",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "prompt": { "type": "string" },
+                "userId": { "type": "string" }
+              },
+              "required": ["prompt"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": { "type": "string" },
+                "riskLevel": { "type": "string" },
+                "message": { "type": "string" },
+                "respuestaEjecutiva": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/create-agent": {
+      "post": {
+        "summary": "Aprobar y Desplegar Agente",
+        "operationId": "create-agent",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "solicitud": { "type": "string" },
+                "agentObjectId": { "type": "string" },
+                "recipientEmail": { "type": "string" }
+              },
+              "required": ["solicitud"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": { "type": "string" },
+                "estadoFinal": { "type": "string" },
+                "respuestaEjecutiva": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/get-full-audit": {
+      "post": {
+        "summary": "Auditoría Global y Filtrada de Agentes",
+        "operationId": "get-full-audit",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": false,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "filter": { "type": "string" },
+                "search": { "type": "string" },
+                "limit": { "type": "integer" }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "respuestaEjecutiva": { "type": "string" },
+                "tiempoRespuestaSegundos": { "type": "number" },
+                "totalFiltrados": { "type": "integer" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/execute-remediation": {
+      "post": {
+        "summary": "Ejecutar Remediación / Cuarentena SOC",
+        "operationId": "execute-remediation",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "botId": { "type": "string" },
+                "searchQuery": { "type": "string" },
+                "tipoAccion": { "type": "string" },
+                "recipientEmail": { "type": "string" }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": { "type": "string" },
+                "message": { "type": "string" },
+                "respuestaEjecutiva": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/send-notification": {
+      "post": {
+        "summary": "Enviar Notificación HTML (Auditoría, Creación o Remediación)",
+        "operationId": "send-notification",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "recipientEmail": { "type": "string" },
+                "tipoReporte": { "type": "string" },
+                "filter": { "type": "string" },
+                "search": { "type": "string" },
+                "detalleEvento": { "type": "string" }
+              },
+              "required": ["recipientEmail"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": { "type": "string" },
+                "message": { "type": "string" },
+                "respuestaEjecutiva": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

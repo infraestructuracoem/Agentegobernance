@@ -1,0 +1,37 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: tema_remediacion_soc
+  intent:
+    triggerQueries:
+      - ejecutar remediacion
+      - poner agente en cuarentena
+      - deshabilitar agente
+      - bloquear agente en entra id
+  actions:
+    - kind: Question
+      id: pedir_identificador
+      alwaysPrompt: true
+      variable: Topic.IdentificadorAgente
+      prompt: "Ingresa el Object ID, App ID o nombre exacto del agente a remediar:"
+
+    - kind: Question
+      id: pedir_tipo_accion
+      alwaysPrompt: true
+      variable: Topic.TipoAccion
+      prompt: "Selecciona el nivel de remediación a ejecutar:"
+      choices:
+        - value: SoftDelete
+        - value: HardDelete
+
+    - kind: InvokeConnectorAction
+      id: invocar_remediacion
+      connectionReference: AI_Gateway_Gobernanza
+      operationId: execute-remediation
+      inputs:
+        body: ={ botId: Topic.IdentificadorAgente, searchQuery: Topic.IdentificadorAgente, tipoAccion: Topic.TipoAccion }
+      outputResult: Topic.ResRemediacion
+
+    - kind: SendActivity
+      id: mostrar_resultado_remediacion
+      activity: "{Topic.ResRemediacion.respuestaEjecutiva}"

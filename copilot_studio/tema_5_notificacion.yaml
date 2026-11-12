@@ -1,0 +1,94 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: tema_enviar_notificacion_unificada
+  intent:
+    triggerQueries:
+      - enviar reporte por correo
+      - enviar notificacion
+      - mandar reporte de auditoria
+      - notificar creacion o remediacion
+  actions:
+    - kind: Question
+      id: pedir_correo_destino
+      alwaysPrompt: true
+      variable: Topic.CorreoDestino
+      prompt: "Ingresa el correo corporativo del destinatario:"
+
+    - kind: Question
+      id: pedir_categoria_reporte
+      alwaysPrompt: true
+      variable: Topic.CategoriaReporte
+      prompt: "¿Qué tipo de reporte o acta deseas enviar por correo?"
+      choices:
+        - value: Auditoría: Agentes en riesgo (≥ 70)
+        - value: Auditoría: Agentes no administrados
+        - value: Acta de Creación / Aprobación de Agente
+        - value: Acta de Remediación / Cuarentena SOC
+
+    - kind: ConditionGroup
+      id: enrutar_envio_notificacion
+      conditions:
+        - id: rama_audit_riesgo
+          condition: =Topic.CategoriaReporte = "Auditoría: Agentes en riesgo (≥ 70)"
+          actions:
+            - kind: InvokeConnectorAction
+              id: env_riesgo
+              connectionReference: AI_Gateway_Gobernanza
+              operationId: send-notification
+              inputs:
+                body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "auditoria", filter: "riesgo" }
+              outputResult: Topic.ResNotif
+            - kind: SendActivity
+              id: msg_riesgo
+              activity: "{Topic.ResNotif.respuestaEjecutiva}"
+
+        - id: rama_audit_no_admin
+          condition: =Topic.CategoriaReporte = "Auditoría: Agentes no administrados"
+          actions:
+            - kind: InvokeConnectorAction
+              id: env_no_admin
+              connectionReference: AI_Gateway_Gobernanza
+              operationId: send-notification
+              inputs:
+                body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "auditoria", filter: "no_administrados" }
+              outputResult: Topic.ResNotif
+            - kind: SendActivity
+              id: msg_no_admin
+              activity: "{Topic.ResNotif.respuestaEjecutiva}"
+
+        - id: rama_acta_creacion
+          condition: =Topic.CategoriaReporte = "Acta de Creación / Aprobación de Agente"
+          actions:
+            - kind: Question
+              id: pedir_detalle_creacion
+              alwaysPrompt: true
+              variable: Topic.DetalleEvento
+              prompt: "Indica el nombre u objetivo del agente aprobado:"
+            - kind: InvokeConnectorAction
+              id: env_creacion
+              connectionReference: AI_Gateway_Gobernanza
+              operationId: send-notification
+              inputs:
+                body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "creacion", detalleEvento: Topic.DetalleEvento }
+              outputResult: Topic.ResNotif
+            - kind: SendActivity
+              id: msg_creacion
+              activity: "{Topic.ResNotif.respuestaEjecutiva}"
+
+      elseActions:
+        - kind: Question
+          id: pedir_detalle_remediacion
+          alwaysPrompt: true
+          variable: Topic.DetalleEventoRem
+          prompt: "Indica el nombre o Object ID del agente remediado:"
+        - kind: InvokeConnectorAction
+          id: env_remediacion
+          connectionReference: AI_Gateway_Gobernanza
+          operationId: send-notification
+          inputs:
+            body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "remediacion", detalleEvento: Topic.DetalleEventoRem }
+          outputResult: Topic.ResNotif
+        - kind: SendActivity
+          id: msg_remediacion
+          activity: "{Topic.ResNotif.respuestaEjecutiva}"

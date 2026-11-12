@@ -1,0 +1,34 @@
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: tema_crear_agente_global
+  intent:
+    triggerQueries:
+      - crear agente
+      - aprobar nuevo agente
+      - registrar agente global
+      - desplegar agente
+  actions:
+    - kind: Question
+      id: pedir_objetivo
+      alwaysPrompt: true
+      variable: Topic.SolicitudAgente
+      prompt: "Describe el objetivo funcional del agente que deseas evaluar y aprobar:"
+
+    - kind: Question
+      id: pedir_object_id
+      alwaysPrompt: true
+      variable: Topic.ObjectIdAgente
+      prompt: "Si ya existe en Entra ID, ingresa su Object ID (o escribe 'ninguno' para aprobación previa):"
+
+    - kind: InvokeConnectorAction
+      id: invocar_create_agent
+      connectionReference: AI_Gateway_Gobernanza
+      operationId: create-agent
+      inputs:
+        body: ={ solicitud: Topic.SolicitudAgente, agentObjectId: If(Lower(Topic.ObjectIdAgente) = "ninguno", "", Topic.ObjectIdAgente) }
+      outputResult: Topic.ResCreacion
+
+    - kind: SendActivity
+      id: mostrar_dictamen_creacion
+      activity: "{Topic.ResCreacion.respuestaEjecutiva}"
