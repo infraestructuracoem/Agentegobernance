@@ -1,6 +1,6 @@
 import html
 from datetime import datetime, timezone
-from shared.config import CORREO_NOTIFICACIONES_TI, FUNCTION_APP_NAME
+from shared.config import CORREO_REMITENTE_TI, CORREO_NOTIFICACIONES_TI, FUNCTION_APP_NAME
 from shared.graph_client import get_graph_token, create_concurrent_session
 
 def enviar_correo_html(asunto: str, cuerpo_html: str, destinatario: str = CORREO_NOTIFICACIONES_TI) -> tuple[bool, str]:
@@ -13,7 +13,7 @@ def enviar_correo_html(asunto: str, cuerpo_html: str, destinatario: str = CORREO
         return False, "No se pudo obtener token de autenticación con Microsoft Graph API."
 
     session = create_concurrent_session(token)
-    url_mail = f"https://graph.microsoft.com/v1.0/users/{CORREO_NOTIFICACIONES_TI}/sendMail"
+    url_mail = f"https://graph.microsoft.com/v1.0/users/{CORREO_REMITENTE_TI}/sendMail"
     payload = {
         "message": {
             "subject": asunto,

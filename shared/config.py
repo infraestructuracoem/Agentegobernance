@@ -1,7 +1,8 @@
 import os
 
 FUNCTION_APP_NAME = "func-gobernanza-core-v"
-CORREO_NOTIFICACIONES_TI = "bcruzn@coem.co"
+CORREO_REMITENTE_TI = "bcruzn@coem.co"
+CORREO_NOTIFICACIONES_TI = "infraestructura@coem.co"
 GRUPO_GOBERNANZA_ID = "ba8dc0c6-368c-41fa-a222-67434d2ec16c"
 UMBRAL_RIESGO_ALTO = 70
 
