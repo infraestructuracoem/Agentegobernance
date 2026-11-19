@@ -16,10 +16,17 @@ beginDialog:
       - inventario de agentes
   actions:
     - kind: InvokeConnectorAction
-      id: invocar_auditoria_general
-      connectionReference: AI_Gateway_Gobernanza
-      operationId: GetFullAuditGeneral
-      outputResult: Topic.ResAuditoria
+      id: invocar_get_full_audit
+      connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.66aee60cbaef4ebe9907d88730ade18a
+      connectionProperties:
+        mode: Maker
+      operationId: GetFullAudit
+      input:
+        binding:
+          filter: ="all"
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.ResAuditoria
 
     - kind: SendActivity
       id: mostrar_auditoria_general

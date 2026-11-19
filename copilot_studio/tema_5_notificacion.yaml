@@ -13,82 +13,131 @@ beginDialog:
       id: pedir_correo_destino
       alwaysPrompt: true
       variable: Topic.CorreoDestino
-      prompt: "Ingresa el correo corporativo del destinatario:"
+      prompt: "Ingresa el correo corporativo del destinatario (o escribe 'default' para enviar a infraestructura@coem.co):"
+      entity: StringPrebuiltEntity
 
     - kind: Question
       id: pedir_categoria_reporte
       alwaysPrompt: true
       variable: Topic.CategoriaReporte
-      prompt: "¿Qué tipo de reporte o acta deseas enviar por correo?"
-      choices:
-        - value: Auditoría: Agentes en riesgo (≥ 70)
-        - value: Auditoría: Agentes no administrados
-        - value: Acta de Creación / Aprobación de Agente
-        - value: Acta de Remediación / Cuarentena SOC
+      prompt:
+        text:
+          - "¿Qué tipo de reporte o acta deseas enviar por correo?"
+        quickReplies:
+          - kind: MessageBack
+            title: "Auditoría: agentes en riesgo (≥ 70)"
+            text: riesgo
+          - kind: MessageBack
+            title: "Auditoría: agentes no administrados"
+            text: no_administrados
+          - kind: MessageBack
+            title: "Acta de creación o aprobación"
+            text: creacion
+          - kind: MessageBack
+            title: "Acta de remediación o cuarentena"
+            text: remediacion
+      entity: StringPrebuiltEntity
 
     - kind: ConditionGroup
       id: enrutar_envio_notificacion
       conditions:
         - id: rama_audit_riesgo
-          condition: =Topic.CategoriaReporte = "Auditoría: Agentes en riesgo (≥ 70)"
+          condition: =Topic.CategoriaReporte = "riesgo"
           actions:
             - kind: InvokeConnectorAction
               id: env_riesgo
-              connectionReference: AI_Gateway_Gobernanza
+              connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+              connectionProperties:
+                mode: Maker
               operationId: SendNotification
-              inputs:
-                body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "auditoria", filter: "riesgo" }
-              outputResult: Topic.ResNotif
+              input:
+                binding:
+                  recipientEmail: =If(Lower(Trim(Topic.CorreoDestino)) = "default", "infraestructura@coem.co", Trim(Topic.CorreoDestino))
+                  tipoReporte: ="auditoria"
+                  filter: ="riesgo"
+              output:
+                kind: SingleVariableOutputBinding
+                variable: Topic.ResNotif
             - kind: SendActivity
               id: msg_riesgo
               activity: "{Topic.ResNotif.respuestaEjecutiva}"
 
         - id: rama_audit_no_admin
-          condition: =Topic.CategoriaReporte = "Auditoría: Agentes no administrados"
+          condition: =Topic.CategoriaReporte = "no_administrados"
           actions:
             - kind: InvokeConnectorAction
               id: env_no_admin
-              connectionReference: AI_Gateway_Gobernanza
+              connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+              connectionProperties:
+                mode: Maker
               operationId: SendNotification
-              inputs:
-                body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "auditoria", filter: "no_administrados" }
-              outputResult: Topic.ResNotif
+              input:
+                binding:
+                  recipientEmail: =If(Lower(Trim(Topic.CorreoDestino)) = "default", "infraestructura@coem.co", Trim(Topic.CorreoDestino))
+                  tipoReporte: ="auditoria"
+                  filter: ="no_administrados"
+              output:
+                kind: SingleVariableOutputBinding
+                variable: Topic.ResNotif
             - kind: SendActivity
               id: msg_no_admin
               activity: "{Topic.ResNotif.respuestaEjecutiva}"
 
         - id: rama_acta_creacion
-          condition: =Topic.CategoriaReporte = "Acta de Creación / Aprobación de Agente"
+          condition: =Topic.CategoriaReporte = "creacion"
           actions:
             - kind: Question
               id: pedir_detalle_creacion
               alwaysPrompt: true
               variable: Topic.DetalleEvento
               prompt: "Indica el nombre u objetivo del agente aprobado:"
+              entity: StringPrebuiltEntity
             - kind: InvokeConnectorAction
               id: env_creacion
-              connectionReference: AI_Gateway_Gobernanza
+              connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+              connectionProperties:
+                mode: Maker
               operationId: SendNotification
-              inputs:
-                body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "creacion", detalleEvento: Topic.DetalleEvento }
-              outputResult: Topic.ResNotif
+              input:
+                binding:
+                  recipientEmail: =If(Lower(Trim(Topic.CorreoDestino)) = "default", "infraestructura@coem.co", Trim(Topic.CorreoDestino))
+                  tipoReporte: ="creacion"
+                  detalleEvento: =Topic.DetalleEvento
+              output:
+                kind: SingleVariableOutputBinding
+                variable: Topic.ResNotif
             - kind: SendActivity
               id: msg_creacion
               activity: "{Topic.ResNotif.respuestaEjecutiva}"
 
+        - id: rama_acta_remediacion
+          condition: =Topic.CategoriaReporte = "remediacion"
+          actions:
+            - kind: Question
+              id: pedir_detalle_remediacion
+              alwaysPrompt: true
+              variable: Topic.DetalleEventoRem
+              prompt: "Indica el nombre o Object ID del agente remediado:"
+              entity: StringPrebuiltEntity
+            - kind: InvokeConnectorAction
+              id: env_remediacion
+              connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+              connectionProperties:
+                mode: Maker
+              operationId: SendNotification
+              input:
+                binding:
+                  recipientEmail: =If(Lower(Trim(Topic.CorreoDestino)) = "default", "infraestructura@coem.co", Trim(Topic.CorreoDestino))
+                  tipoReporte: ="remediacion"
+                  detalleEvento: =Topic.DetalleEventoRem
+              output:
+                kind: SingleVariableOutputBinding
+                variable: Topic.ResNotif
+            - kind: SendActivity
+              id: msg_remediacion
+              activity: "{Topic.ResNotif.respuestaEjecutiva}"
+
       elseActions:
-        - kind: Question
-          id: pedir_detalle_remediacion
-          alwaysPrompt: true
-          variable: Topic.DetalleEventoRem
-          prompt: "Indica el nombre o Object ID del agente remediado:"
-        - kind: InvokeConnectorAction
-          id: env_remediacion
-          connectionReference: AI_Gateway_Gobernanza
-          operationId: SendNotification
-          inputs:
-            body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "remediacion", detalleEvento: Topic.DetalleEventoRem }
-          outputResult: Topic.ResNotif
         - kind: SendActivity
-          id: msg_remediacion
-          activity: "{Topic.ResNotif.respuestaEjecutiva}"
+          id: categoria_reporte_invalida
+          activity: "No reconocí la categoría del reporte. No se envió ningún correo."

@@ -14,20 +14,28 @@ beginDialog:
       alwaysPrompt: true
       variable: Topic.SolicitudAgente
       prompt: "Describe el objetivo funcional del agente que deseas evaluar y aprobar:"
+      entity: StringPrebuiltEntity
 
     - kind: Question
       id: pedir_object_id
       alwaysPrompt: true
       variable: Topic.ObjectIdAgente
       prompt: "Si ya existe en Entra ID, ingresa su Object ID (o escribe 'ninguno' para aprobación previa):"
+      entity: StringPrebuiltEntity
 
     - kind: InvokeConnectorAction
       id: invocar_create_agent
-      connectionReference: AI_Gateway_Gobernanza
+      connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+      connectionProperties:
+        mode: Maker
       operationId: CreateAgent
-      inputs:
-        body: ={ solicitud: Topic.SolicitudAgente, agentObjectId: If(Lower(Topic.ObjectIdAgente) = "ninguno", "", Topic.ObjectIdAgente) }
-      outputResult: Topic.ResCreacion
+      input:
+        binding:
+          solicitud: =Topic.SolicitudAgente
+          agentObjectId: =If(Lower(Trim(Topic.ObjectIdAgente)) = "ninguno", "", Trim(Topic.ObjectIdAgente))
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.ResCreacion
 
     - kind: SendActivity
       id: mostrar_dictamen_creacion

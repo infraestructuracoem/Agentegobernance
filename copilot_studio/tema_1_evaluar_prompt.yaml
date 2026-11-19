@@ -13,14 +13,21 @@ beginDialog:
       alwaysPrompt: true
       variable: Topic.PromptEvaluar
       prompt: "Ingresa el prompt o instrucción que deseas validar contra las políticas DLP:"
+      entity: StringPrebuiltEntity
 
     - kind: InvokeConnectorAction
       id: invocar_evaluate_prompt
-      connectionReference: AI_Gateway_Gobernanza
+      connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+      connectionProperties:
+        mode: Maker
       operationId: EvaluatePrompt
-      inputs:
-        body: ={ prompt: Topic.PromptEvaluar, userId: System.User.Email }
-      outputResult: Topic.ResDLP
+      input:
+        binding:
+          prompt: =Topic.PromptEvaluar
+          userId: =System.User.Email
+      output:
+        kind: SingleVariableOutputBinding
+        variable: Topic.ResDLP
 
     - kind: SendActivity
       id: mostrar_dictamen_dlp

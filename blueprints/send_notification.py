@@ -6,7 +6,7 @@ from blueprints.get_full_audit import ejecutar_inventario_concurrente
 
 bp_notification = func.Blueprint()
 
-@bp_notification.route(route="send-notification", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@bp_notification.route(route="send-notification", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def send_notification(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
@@ -17,25 +17,39 @@ def send_notification(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
+    if not isinstance(body, dict):
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": "El cuerpo debe ser un objeto JSON."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     recipient = str(body.get("recipientEmail") or body.get("email") or CORREO_NOTIFICACIONES_TI).strip()
     tipo_reporte = str(body.get("tipoReporte", "auditoria")).strip().lower()
     filtro = str(body.get("filter", "riesgo")).strip().lower()
     search_term = str(body.get("search", "")).strip().lower()
     detalle_evento = str(body.get("detalleEvento", "")).strip()
 
+    if tipo_reporte not in {"auditoria", "creacion", "remediacion"}:
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": "tipoReporte debe ser auditoria, creacion o remediacion."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     if tipo_reporte == "creacion":
         html_body = construir_html_evento(
-            titulo="NOTIFICACIÓN DE CREACIÓN / APROBACIÓN DE AGENTE IA",
+            titulo="NOTIFICACIÓN DE SOLICITUD DE AGENTE IA",
             color_acento="#238636",
             badge="GOBERNANZA DE CREACIÓN",
             detalles={
                 "Solicitud / Agente": detalle_evento or search_term or "Agente Corporativo M365",
-                "Estado": "APROBADO GLOBAL",
+                "Estado": "Pendiente de validación",
                 "Solicitante / Destinatario": recipient
             }
         )
         asunto = f"[GOBERNANZA IA] Notificación de Creación de Agente"
-        resumen_registros = "Acta de aprobación de agente"
+        resumen_registros = "Notificación de solicitud de agente"
 
     elif tipo_reporte == "remediacion":
         html_body = construir_html_evento(
@@ -56,11 +70,12 @@ def send_notification(req: func.HttpRequest) -> func.HttpResponse:
         if "error" in auditoria:
             return func.HttpResponse(
                 json.dumps({"status": "ERROR", "message": auditoria["error"]}, ensure_ascii=False),
-                status_code=500,
+                status_code=502,
                 mimetype="application/json"
             )
         agentes = auditoria.get("agentes", [])
         metricas = auditoria.get("metricasAgentMap", {})
+        metricas["coberturaPermisosAplicacion"] = "NO EVALUADOS (appRoleAssignments)"
         criterio = (f"BÚSQUEDA: {search_term}" if search_term else f"FILTRO: {filtro}").upper()
         html_body = construir_html_auditoria(agents_data=agentes, criterio=criterio, metricas=metricas)
         asunto = f"Reporte de Gobernanza IA ({criterio}) - {len(agentes)} registros"

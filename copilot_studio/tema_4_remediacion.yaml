@@ -14,34 +14,52 @@ beginDialog:
       alwaysPrompt: true
       variable: Topic.IdentificadorAgente
       prompt: "Ingresa el Object ID, App ID o nombre exacto del agente a remediar:"
+      entity: StringPrebuiltEntity
 
     - kind: Question
       id: pedir_tipo_accion
       alwaysPrompt: true
       variable: Topic.TipoAccion
-      prompt: "Selecciona el nivel de remediación a ejecutar:"
-      choices:
-        - value: SoftDelete
-        - value: HardDelete
+      prompt:
+        text:
+          - "Selecciona el nivel de remediación a ejecutar:"
+        quickReplies:
+          - kind: MessageBack
+            title: Cuarentena reversible
+            text: SoftDelete
+          - kind: MessageBack
+            title: Eliminación definitiva
+            text: HardDelete
+      entity: StringPrebuiltEntity
 
     - kind: ConditionGroup
       id: confirmar_hard_delete
       conditions:
         - id: requiere_confirmacion
-          condition: =Topic.TipoAccion = "HardDelete"
+          condition: =Lower(Topic.TipoAccion) = "harddelete"
           actions:
             - kind: Question
               id: confirmar_borrado_definitivo
               alwaysPrompt: true
               variable: Topic.ConfirmarHardDelete
-              prompt: "Confirmación obligatoria: el borrado definitivo elimina el agente y no se puede deshacer. Escribe CONFIRMAR o CANCELAR."
+              prompt:
+                text:
+                  - "Confirmación obligatoria: el borrado definitivo elimina el agente y no se puede deshacer."
+                quickReplies:
+                  - kind: MessageBack
+                    title: Confirmar eliminación
+                    text: CONFIRMAR
+                  - kind: MessageBack
+                    title: Cancelar
+                    text: CANCELAR
+              entity: StringPrebuiltEntity
       elseActions: []
 
     - kind: ConditionGroup
       id: bloquear_cancelacion_hard_delete
       conditions:
         - id: cancelacion_hard_delete
-          condition: =Topic.TipoAccion = "HardDelete" And Lower(Topic.ConfirmarHardDelete) <> "confirmar"
+          condition: =Lower(Topic.TipoAccion) = "harddelete" And Lower(Topic.ConfirmarHardDelete) <> "confirmar"
           actions:
             - kind: SendActivity
               id: cancelar_hard_delete
@@ -49,12 +67,18 @@ beginDialog:
       elseActions:
         - kind: InvokeConnectorAction
           id: invocar_remediacion
-          connectionReference: AI_Gateway_Gobernanza
+          connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
+          connectionProperties:
+            mode: Maker
           operationId: ExecuteRemediation
-          inputs:
-            body: ={ botId: If(GUID(Topic.IdentificadorAgente), Topic.IdentificadorAgente, ""), searchQuery: If(GUID(Topic.IdentificadorAgente), "", Topic.IdentificadorAgente), tipoAccion: Topic.TipoAccion }
-          outputResult: Topic.ResRemediacion
-
-    - kind: SendActivity
-      id: mostrar_resultado_remediacion
-      activity: "{Topic.ResRemediacion.respuestaEjecutiva}"
+          input:
+            binding:
+              botId: =Trim(Topic.IdentificadorAgente)
+              tipoAccion: =Topic.TipoAccion
+              confirmHardDelete: =Lower(Topic.TipoAccion) = "harddelete" And Lower(Topic.ConfirmarHardDelete) = "confirmar"
+          output:
+            kind: SingleVariableOutputBinding
+            variable: Topic.ResRemediacion
+        - kind: SendActivity
+          id: mostrar_resultado_remediacion
+          activity: "{Topic.ResRemediacion.respuestaEjecutiva}"

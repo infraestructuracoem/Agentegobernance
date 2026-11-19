@@ -1,4 +1,5 @@
 import html
+import requests
 from datetime import datetime, timezone
 from shared.config import CORREO_REMITENTE_TI, CORREO_NOTIFICACIONES_TI, FUNCTION_APP_NAME
 from shared.graph_client import get_graph_token, create_concurrent_session
@@ -28,7 +29,7 @@ def enviar_correo_html(asunto: str, cuerpo_html: str, destinatario: str = CORREO
         if resp.status_code in [200, 202]:
             return True, f"Correo enviado exitosamente a {destino}."
         return False, f"Error Graph API ({resp.status_code}): {resp.text}"
-    except Exception as ex:
+    except requests.RequestException as ex:
         return False, f"Excepción al enviar correo: {str(ex)}"
 
 def construir_html_auditoria(agents_data: list, criterio: str, metricas: dict | None = None) -> str:
@@ -72,6 +73,12 @@ def construir_html_auditoria(agents_data: list, criterio: str, metricas: dict | 
             f'<strong>En Riesgo (≥70):</strong> {metricas.get("agentesEnRiesgo", 0)} | '
             f'<strong>No Administrados:</strong> {metricas.get("agentesNoAdministrados", 0)}</p>'
         )
+        if metricas.get("coberturaPermisosAplicacion"):
+            resumen_html += (
+                f'<p style="color: #f08c00; font-size: 13px;">'
+                f'<strong>Cobertura de permisos de aplicación:</strong> '
+                f'{html.escape(str(metricas["coberturaPermisosAplicacion"]))}</p>'
+            )
 
     return (
         '<html><body style="font-family: \'Segoe UI\', sans-serif; background-color: #0f1117; color: #e0e0e0; padding: 20px;">'

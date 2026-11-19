@@ -1,11 +1,11 @@
 import json
 import azure.functions as func
 from shared.config import PALABRAS_PROHIBIDAS
-from shared.graph_client import normalizar_texto, es_propietario_gobernanza
+from shared.graph_client import normalizar_texto
 
 bp_evaluate = func.Blueprint()
 
-@bp_evaluate.route(route="evaluate-prompt", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@bp_evaluate.route(route="evaluate-prompt", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def evaluate_prompt(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
@@ -16,8 +16,14 @@ def evaluate_prompt(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
+    if not isinstance(body, dict):
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": "El cuerpo debe ser un objeto JSON."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     prompt_raw = str(body.get("prompt", "")).strip()
-    user_id = str(body.get("userId", "")).strip()
 
     if not prompt_raw:
         return func.HttpResponse(
@@ -25,17 +31,6 @@ def evaluate_prompt(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400,
             mimetype="application/json"
         )
-
-    if user_id and es_propietario_gobernanza(user_id):
-        res = {
-            "status": "APPROVED",
-            "riskLevel": "BYPASS_ADMIN",
-            "userRole": "GOVERNANCE_OWNER",
-            "message": "Acceso autorizado por rol de Propietario en GRP Gobernanza IA Purview.",
-            "signature": "SIG_GOV_BYPASS_OWNER_OK",
-            "respuestaEjecutiva": "ESTADO: APPROVED (BYPASS PROPIETARIO)\nFirma: SIG_GOV_BYPASS_OWNER_OK\nValidación DLP omitida por privilegios de administración de gobernanza."
-        }
-        return func.HttpResponse(json.dumps(res, ensure_ascii=False), status_code=200, mimetype="application/json")
 
     prompt_norm = normalizar_texto(prompt_raw)
     hallazgos = [p for p in PALABRAS_PROHIBIDAS if p in prompt_norm]

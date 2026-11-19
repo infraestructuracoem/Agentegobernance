@@ -5,6 +5,7 @@ import os
 import requests
 import re
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 import azure.functions as func
 from shared.config import UMBRAL_RIESGO_ALTO, PERMISOS_ALTO_IMPACTO
 from shared.graph_client import get_graph_token, create_concurrent_session, normalizar_texto
@@ -81,18 +82,23 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
     def fetch_items(url: str, timeout: int = 5):
         items = []
         pages = 0
+        complete = True
         while url and pages < 45 and (time.time() - start) < max_time:
             try:
                 response = session.get(url, timeout=timeout)
                 if response.status_code != 200:
+                    complete = False
                     break
                 data = response.json()
                 items.extend(data.get("value", []))
                 url = data.get("@odata.nextLink")
                 pages += 1
             except (requests.RequestException, ValueError):
+                complete = False
                 break
-        return items
+        if url:
+            complete = False
+        return items, complete
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         catalog_future = executor.submit(fetch_items, "https://graph.microsoft.com/beta/copilot/admin/catalog/packages?$top=999")
@@ -101,9 +107,12 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
             "https://graph.microsoft.com/v1.0/servicePrincipals?$top=100&$select=id,displayName,appId,tags,accountEnabled,publisherName,verifiedPublisher,servicePrincipalType",
         )
         grants_future = executor.submit(fetch_items, "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$top=999")
-        catalog = catalog_future.result()
-        service_principals = service_principals_future.result()
-        grants = grants_future.result()
+        catalog, catalog_completo = catalog_future.result()
+        service_principals, sps_completos = service_principals_future.result()
+        grants, grants_completos = grants_future.result()
+
+    if not (catalog_completo and sps_completos and grants_completos):
+        return {"error": "No se pudo completar el inventario de todas las fuentes Graph; no se generó un reporte parcial."}
 
     grants_map = {}
     for grant in grants:
@@ -149,9 +158,9 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
             "sinPropietario": unowned,
             "puntuacionRiesgo": score,
             "nivelRiesgo": "ALTO" if en_riesgo else ("MEDIO" if score >= 50 else "BAJO"),
-            "accesoGraphAPI": "Sí",
-            "tipoPermiso": "Delegado",
-            "tipoConsentimiento": "Usuario",
+            "accesoGraphAPI": "No evaluado",
+            "tipoPermiso": "No evaluado",
+            "tipoConsentimiento": "No evaluado",
             "editor": publisher,
             "enRiesgo": en_riesgo,
         })
@@ -202,8 +211,8 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
             "sinPropietario": unowned,
             "puntuacionRiesgo": score,
             "nivelRiesgo": "ALTO" if en_riesgo else ("MEDIO" if score >= 50 else "BAJO"),
-            "accesoGraphAPI": "Sí" if grant else "No",
-            "tipoPermiso": "Delegado" if grant else "Aplicación",
+            "accesoGraphAPI": "Sí (delegado)" if grant else "No detectado en permisos delegados",
+            "tipoPermiso": "Delegado" if grant else "No detectado",
             "tipoConsentimiento": "Administrador" if (grant and grant["consentType"] == "AllPrincipals") else "Usuario",
             "editor": verified or publisher or "N/D",
             "enRiesgo": en_riesgo,
@@ -211,7 +220,13 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
 
     agentes.sort(key=lambda item: item["puntuacionRiesgo"], reverse=True)
     if search_term:
-        agentes = [item for item in agentes if search_term in item["nombre"].lower() or search_term in item["id"].lower() or search_term in str(item["appId"]).lower() or search_term in item["plataforma"].lower()]
+        agentes = [
+            item for item in agentes
+            if search_term in normalizar_texto(item["nombre"])
+            or search_term in item["id"].lower()
+            or search_term in str(item["appId"]).lower()
+            or search_term in normalizar_texto(item["plataforma"])
+        ]
     if filtro in ["riesgo", "riesgosos", "criticos"]:
         agentes = [item for item in agentes if item["enRiesgo"]]
     elif filtro in ["no_administrados", "no-administrados"]:
@@ -228,6 +243,7 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
             "agentesSinPropietario": sum(1 for item in agentes if item["sinPropietario"]),
             "agentesEnRiesgo": sum(1 for item in agentes if item["enRiesgo"]),
             "agentesNoAdministrados": sum(1 for item in agentes if item["plataforma"] in ["Terceros", "Otros"]),
+            "coberturaPermisosAplicacion": "NO EVALUADOS",
         },
     }
 
@@ -250,33 +266,53 @@ def _clasificar_plataforma(nombre_lower: str, pub_lower: str, tags: list) -> str
         return "Terceros"
     return "Otros"
 
-@bp_audit.route(route="get-full-audit", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET", "POST"])
+@bp_audit.route(route="get-full-audit", auth_level=func.AuthLevel.FUNCTION, methods=["GET", "POST"])
 def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()
     MAX_TIME = 55.0
 
     filtro = str(req.params.get("filter", "")).strip().lower()
-    search_term = normalizar_texto(req.params.get("search", ""))
+    search_term_raw = str(req.params.get("search", "")).strip()
+    search_term = normalizar_texto(search_term_raw)
     try:
         limit = int(req.params.get("limit", 50))
     except ValueError:
         limit = 50
     limit = max(1, min(limit, 100))
 
-    try:
-        body = req.get_json()
-        if isinstance(body, dict):
-            filtro = str(body.get("filter", filtro)).strip().lower()
-            search_term = normalizar_texto(body.get("search", search_term))
-            if "limit" in body and body["limit"] is not None:
+    if req.method == "POST":
+        try:
+            body = req.get_json()
+        except ValueError:
+            return func.HttpResponse(
+                json.dumps({"status": "ERROR", "message": "Cuerpo JSON inválido."}, ensure_ascii=False),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not isinstance(body, dict):
+            return func.HttpResponse(
+                json.dumps({"status": "ERROR", "message": "El cuerpo debe ser un objeto JSON."}, ensure_ascii=False),
+                status_code=400,
+                mimetype="application/json"
+            )
+        filtro = str(body.get("filter", filtro)).strip().lower()
+        search_term_raw = str(body.get("search", search_term_raw)).strip()
+        search_term = normalizar_texto(search_term_raw)
+        if "limit" in body and body["limit"] is not None:
+            try:
                 limit = int(body["limit"])
-    except Exception:
-        pass
+            except (TypeError, ValueError):
+                return func.HttpResponse(
+                    json.dumps({"status": "ERROR", "message": "El campo 'limit' debe ser un entero."}, ensure_ascii=False),
+                    status_code=400,
+                    mimetype="application/json"
+                )
 
     if not filtro:
         filtro = "all"
     if search_term in FRASES_GENERICAS_IGNORAR:
         search_term = ""
+        search_term_raw = ""
     limit = max(1, min(limit, 100))
 
     token = get_graph_token()
@@ -295,10 +331,10 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         completos = True
         catalog_base = "https://graph.microsoft.com/beta/copilot/admin/catalog/packages?$top=999"
         if search_term:
-            nombre_odata = search_term.replace("'", "''")
+            nombre_odata = quote(search_term_raw.replace("'", "''"), safe="")
             catalog_base = (
                 "https://graph.microsoft.com/beta/copilot/admin/catalog/packages"
-                f"?$filter=displayName eq '{nombre_odata}'&$top=999"
+                f"?$filter=contains(displayName,'{nombre_odata}')&$top=999"
             )
         url = catalog_base
         pages = 0
@@ -313,9 +349,11 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
                     items.append(pkg)
                 url = data.get("@odata.nextLink")
                 pages += 1
-            except Exception:
+            except (requests.RequestException, ValueError, TypeError):
                 completos = False
                 break
+        if url:
+            completos = False
         return items, completos
 
     def fetch_service_principals():
@@ -326,10 +364,10 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             "?$top=100&$select=id,displayName,appId,tags,accountEnabled,publisherName,verifiedPublisher,servicePrincipalType"
         )
         if search_term:
-            nombre_odata = search_term.replace("'", "''")
+            nombre_odata = quote(search_term_raw.replace("'", "''"), safe="")
             sp_base = (
                 "https://graph.microsoft.com/v1.0/servicePrincipals"
-                f"?$filter=displayName eq '{nombre_odata}'"
+                f"?$filter=contains(displayName,'{nombre_odata}')"
                 "&$top=100&$select=id,displayName,appId,tags,accountEnabled,publisherName,verifiedPublisher,servicePrincipalType"
             )
         url = sp_base
@@ -344,9 +382,11 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
                 items.extend(data.get("value", []))
                 url = data.get("@odata.nextLink")
                 pages += 1
-            except Exception:
+            except (requests.RequestException, ValueError, TypeError):
                 completos = False
                 break
+        if url:
+            completos = False
         return items, completos
 
     def fetch_oauth_grants():
@@ -372,9 +412,11 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
                             entry["consentType"] = "AllPrincipals"
                 url = data.get("@odata.nextLink")
                 pages += 1
-            except Exception:
+            except (requests.RequestException, ValueError, TypeError):
                 completos = False
                 break
+        if url:
+            completos = False
         return grants_map, completos
 
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -426,9 +468,9 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             "sinPropietario": sin_prop,
             "puntuacionRiesgo": score,
             "nivelRiesgo": "ALTO" if en_riesgo else ("MEDIO" if score >= 50 else "BAJO"),
-            "accesoGraphAPI": "Sí",
-            "tipoPermiso": "Delegado",
-            "tipoConsentimiento": "Usuario",
+            "accesoGraphAPI": "No evaluado",
+            "tipoPermiso": "No evaluado",
+            "tipoConsentimiento": "No evaluado",
             "editor": plat,
             "enRiesgo": en_riesgo
         })
@@ -489,8 +531,8 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             "sinPropietario": sin_prop,
             "puntuacionRiesgo": score,
             "nivelRiesgo": "ALTO" if en_riesgo else ("MEDIO" if score >= 50 else "BAJO"),
-            "accesoGraphAPI": "Sí" if tiene_grants else "No",
-            "tipoPermiso": "Delegado" if tiene_grants else "Aplicación",
+            "accesoGraphAPI": "Sí (delegado)" if tiene_grants else "No detectado en permisos delegados",
+            "tipoPermiso": "Delegado" if tiene_grants else "No detectado",
             "tipoConsentimiento": "Administrador" if (grant_info and grant_info["consentType"] == "AllPrincipals") else "Usuario",
             "editor": verified_pub or pub_raw or "N/D",
             "enRiesgo": en_riesgo
@@ -512,10 +554,10 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
     if search_term:
         filtrados = [
             a for a in filtrados
-            if search_term in a["nombre"].lower()
+            if search_term in normalizar_texto(a["nombre"])
             or search_term in a["id"].lower()
             or search_term in str(a["appId"]).lower()
-            or search_term in a["plataforma"].lower()
+            or search_term in normalizar_texto(a["plataforma"])
         ]
 
     if filtro in ["riesgo", "riesgosos", "criticos"]:
@@ -529,7 +571,9 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
 
     muestra = filtrados[:max(1, min(limit, 100))]
     elapsed = round(time.time() - start_time, 2)
-    cobertura_completa = catalog_completo and sps_completo and grants_completos
+    cobertura_fuentes = catalog_completo and sps_completo and grants_completos
+    permisos_aplicacion_evaluados = False
+    cobertura_completa = cobertura_fuentes and permisos_aplicacion_evaluados
     estado_cobertura = "COMPLETA" if cobertura_completa else "PARCIAL"
 
     def fmt_num(n: int) -> str:
@@ -555,11 +599,12 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             "HALLAZGOS DE GOBERNANZA\n"
             f"- Se detectan {fmt_num(total_riesgo)} agentes clasificados en riesgo alto con puntuación ≥ {UMBRAL_RIESGO_ALTO}.\n"
             f"- Se identifica un volumen elevado de agentes no administrados ({fmt_num(total_no_admin)}).\n"
-            "- Existen múltiples Service Principals asociados a Copilot Studio y Azure AI Foundry con acceso activo a Microsoft Graph.\n\n"
+            "- Se identifican Service Principals asociados a Copilot Studio y Azure AI Foundry; el acceso por permisos de aplicación no fue evaluado.\n\n"
             "COBERTURA DE FUENTES\n"
             f"- Catálogo Copilot: {'COMPLETA' if catalog_completo else 'PARCIAL'}.\n"
             f"- Service Principals: {'COMPLETA' if sps_completo else 'PARCIAL'}.\n"
             f"- OAuth2 Permission Grants: {'COMPLETA' if grants_completos else 'PARCIAL'}.\n\n"
+            "- Permisos de aplicación (appRoleAssignments): NO EVALUADOS; no concluir ausencia de permisos Graph.\n\n"
             "PERÍMETRO ANALIZADO\n"
             "- Entra ID, Microsoft Defender Cloud Apps, Microsoft 365 y Microsoft Purview DSPM.\n"
             f"- Tiempo de análisis concurrente: {elapsed}s."
@@ -579,7 +624,8 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             f"RESULTADOS DE AUDITORÍA ESPECÍFICA ({criterio_lbl})\n"
             f"- Coincidencias encontradas: {fmt_num(len(filtrados))} (Mostrando top {min(len(muestra), 20)} ordenados por mayor riesgo)\n"
             f"- Cobertura: {estado_cobertura} (Catálogo Copilot: {'COMPLETA' if catalog_completo else 'PARCIAL'}; "
-            f"Service Principals: {'COMPLETA' if sps_completo else 'PARCIAL'}; OAuth2 Permission Grants: {'COMPLETA' if grants_completos else 'PARCIAL'}).\n"
+            f"Service Principals: {'COMPLETA' if sps_completo else 'PARCIAL'}; OAuth2 Permission Grants: {'COMPLETA' if grants_completos else 'PARCIAL'}; "
+            "permisos de aplicación: NO EVALUADOS).\n"
             f"- Firma digital: {'SIG_GOV_APPROVED_OK' if cobertura_completa else 'SIG_GOV_PARTIAL_COVERAGE'}\n\n"
             f"{listado_txt}"
         )
@@ -589,10 +635,12 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         "perimetroGobernanza": "Toda la Organización (Purview, Defender, Entra ID & M365)",
         "tiempoRespuestaSegundos": elapsed,
         "estadoCobertura": estado_cobertura,
+        "coberturaPermisosAplicacion": "NO EVALUADOS (appRoleAssignments)",
         "fuentes": {
             "catalogoCopilot": "COMPLETA" if catalog_completo else "PARCIAL",
             "servicePrincipals": "COMPLETA" if sps_completo else "PARCIAL",
-            "oauth2PermissionGrants": "COMPLETA" if grants_completos else "PARCIAL"
+            "oauth2PermissionGrants": "COMPLETA" if grants_completos else "PARCIAL",
+            "appRoleAssignments": "NO EVALUADOS"
         },
         "metricasAgentMap": {
             "totalAgentes": total_org,

@@ -3,11 +3,23 @@
   "info": {
     "title": "AI_Gateway_Gobernanza",
     "description": "Gateway de Gobernanza de IA - 5 Endpoints Integrados",
-    "version": "2.2"
+    "version": "2.3"
   },
   "host": "func-gobernanza-core-v-avfqdnedb2e2g5c2.eastus-01.azurewebsites.net",
   "basePath": "/api",
   "schemes": ["https"],
+  "securityDefinitions": {
+    "function_key": {
+      "type": "apiKey",
+      "name": "x-functions-key",
+      "in": "header"
+    }
+  },
+  "security": [
+    {
+      "function_key": []
+    }
+  ],
   "consumes": ["application/json"],
   "produces": ["application/json"],
   "paths": {
@@ -94,6 +106,7 @@
               "properties": {
                 "respuestaEjecutiva": { "type": "string" },
                 "estadoCobertura": { "type": "string" },
+                "coberturaPermisosAplicacion": { "type": "string" },
                 "tiempoRespuestaSegundos": { "type": "number" },
                 "totalFiltrados": { "type": "integer" },
                 "metricasAgentMap": { "type": "object" },
