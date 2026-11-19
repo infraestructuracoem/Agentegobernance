@@ -1,11 +1,219 @@
 import json
 import time
+import csv
+import os
+import requests
+import re
 from concurrent.futures import ThreadPoolExecutor
 import azure.functions as func
 from shared.config import UMBRAL_RIESGO_ALTO, PERMISOS_ALTO_IMPACTO
 from shared.graph_client import get_graph_token, create_concurrent_session
 
 bp_audit = func.Blueprint()
+
+FRASES_GENERICAS_IGNORAR = {
+    "agentes en riesgo",
+    "todos los agentes",
+    "lista de agentes",
+    "auditoria",
+    "auditoria global",
+}
+
+def _cargar_snapshot_defender() -> dict:
+    ruta = os.path.join(os.path.dirname(os.path.dirname(__file__)), "shared", "defender_snapshot.csv")
+    snapshot = {}
+    try:
+        with open(ruta, "r", encoding="utf-8-sig", newline="") as archivo:
+            archivo.readline()
+            for linea in archivo:
+                coincidencia = re.match(r'^"?([^",]+),[^,]+,([0-9]+),', linea)
+                if not coincidencia:
+                    continue
+                nombre = coincidencia.group(1).strip().lower()
+                if not nombre:
+                    continue
+                score = int(coincidencia.group(2))
+                snapshot[nombre] = max(0, min(score, 100))
+    except (OSError, csv.Error):
+        return {}
+    return snapshot
+
+def _score_defender(nombre: str, snapshot: dict) -> int | None:
+    nombre_norm = str(nombre).strip().lower()
+    if nombre_norm in snapshot:
+        return snapshot[nombre_norm]
+    coincidencias = [score for clave, score in snapshot.items() if len(clave) >= 4 and (clave in nombre_norm or nombre_norm in clave)]
+    if len(coincidencias) == 1:
+        return coincidencias[0]
+    return None
+
+def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", limit: int = 100) -> dict:
+    start = time.time()
+    limit = max(1, min(limit, 100))
+    filtro = (filtro or "all").strip().lower()
+    search_term = (search_term or "").strip().lower()
+    if search_term in FRASES_GENERICAS_IGNORAR:
+        search_term = ""
+
+    token = get_graph_token()
+    if not token:
+        return {"error": "Fallo de autenticación con Microsoft Graph API."}
+
+    session = create_concurrent_session(token)
+    snapshot_defender = _cargar_snapshot_defender()
+
+    def fetch_items(url: str, timeout: int = 5):
+        items = []
+        pages = 0
+        while url and pages < 45 and (time.time() - start) < 19.0:
+            try:
+                response = session.get(url, timeout=timeout)
+                if response.status_code != 200:
+                    break
+                data = response.json()
+                items.extend(data.get("value", []))
+                url = data.get("@odata.nextLink")
+                pages += 1
+            except (requests.RequestException, ValueError):
+                break
+        return items
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        catalog_future = executor.submit(fetch_items, "https://graph.microsoft.com/beta/copilot/admin/catalog/packages?$top=999")
+        service_principals_future = executor.submit(
+            fetch_items,
+            "https://graph.microsoft.com/v1.0/servicePrincipals?$top=100&$select=id,displayName,appId,tags,accountEnabled,publisherName,verifiedPublisher,servicePrincipalType",
+        )
+        grants_future = executor.submit(fetch_items, "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$top=999")
+        catalog = catalog_future.result()
+        service_principals = service_principals_future.result()
+        grants = grants_future.result()
+
+    grants_map = {}
+    for grant in grants:
+        client_id = grant.get("clientId")
+        if not client_id:
+            continue
+        entry = grants_map.setdefault(client_id, {"scopes": [], "consentType": grant.get("consentType", "Principal")})
+        entry["scopes"].extend(grant.get("scope", "").split())
+        if grant.get("consentType") == "AllPrincipals":
+            entry["consentType"] = "AllPrincipals"
+
+    agentes = []
+    seen = set()
+    for package in catalog:
+        package_id = str(package.get("id", "")).strip()
+        app_id = str(package.get("appId", ""))
+        if not package_id or package_id in seen:
+            continue
+        seen.update(value for value in (package_id, app_id) if value)
+        name = str(package.get("displayName", "Agente M365"))
+        state = str(package.get("state", "Active"))
+        unowned = state in ["Orphaned", "Unowned"] or "sin propietario" in name.lower()
+        score = 25
+        if state == "Disabled":
+            score += 20
+        if unowned:
+            score += 30
+        if str(package.get("riskLevel", "")).lower() == "high":
+            score += 40
+        defender_score = _score_defender(name, snapshot_defender)
+        if defender_score is not None:
+            score = max(score, defender_score)
+        score = min(score, 100)
+        en_riesgo = score >= UMBRAL_RIESGO_ALTO
+        publisher = str(package.get("publisherName") or "Copilot Studio")
+        agentes.append({
+            "id": package_id,
+            "appId": app_id,
+            "nombre": name,
+            "plataforma": publisher,
+            "origen": "Microsoft 365 Catalog",
+            "enabled": state != "Disabled",
+            "sinPropietario": unowned,
+            "puntuacionRiesgo": score,
+            "nivelRiesgo": "ALTO" if en_riesgo else ("MEDIO" if score >= 50 else "BAJO"),
+            "accesoGraphAPI": "Sí",
+            "tipoPermiso": "Delegado",
+            "tipoConsentimiento": "Usuario",
+            "editor": publisher,
+            "enRiesgo": en_riesgo,
+        })
+
+    for sp in service_principals:
+        object_id = str(sp.get("id", "")).strip()
+        app_id = str(sp.get("appId", "")).strip()
+        if not object_id or object_id in seen or (app_id and app_id in seen):
+            continue
+        seen.update(value for value in (object_id, app_id) if value)
+        name = str(sp.get("displayName") or "Sin Nombre")
+        name_lower = name.lower()
+        tags = sp.get("tags") or []
+        enabled = bool(sp.get("accountEnabled", True))
+        publisher = str(sp.get("publisherName") or "")
+        publisher_lower = publisher.lower()
+        verified = (sp.get("verifiedPublisher") or {}).get("displayName")
+        platform = _clasificar_plataforma(name_lower, publisher_lower, tags)
+        unowned = any(key in name_lower for key in ("sin propietario", "unowned", "orphan"))
+        grant = grants_map.get(object_id)
+        scopes = " ".join(grant["scopes"]).lower() if grant else ""
+        critical_permission = any(permission in scopes for permission in PERMISOS_ALTO_IMPACTO)
+        score = 15
+        if not verified and "microsoft" not in publisher_lower:
+            score += 20
+        if platform in ["Terceros", "Otros"] and enabled:
+            score += 15
+        if grant:
+            score += 15
+            if critical_permission:
+                score += 20
+        if unowned:
+            score += 25
+        if "HighRisk" in tags or "Status:Blocked" in tags:
+            score += 35
+        defender_score = _score_defender(name, snapshot_defender)
+        if defender_score is not None:
+            score = max(score, defender_score)
+        score = min(score, 100)
+        en_riesgo = score >= UMBRAL_RIESGO_ALTO
+        agentes.append({
+            "id": object_id,
+            "appId": app_id,
+            "nombre": name,
+            "plataforma": platform,
+            "origen": "Interno" if "microsoft" in publisher_lower else "Externo",
+            "enabled": enabled,
+            "sinPropietario": unowned,
+            "puntuacionRiesgo": score,
+            "nivelRiesgo": "ALTO" if en_riesgo else ("MEDIO" if score >= 50 else "BAJO"),
+            "accesoGraphAPI": "Sí" if grant else "No",
+            "tipoPermiso": "Delegado" if grant else "Aplicación",
+            "tipoConsentimiento": "Administrador" if (grant and grant["consentType"] == "AllPrincipals") else "Usuario",
+            "editor": verified or publisher or "N/D",
+            "enRiesgo": en_riesgo,
+        })
+
+    agentes.sort(key=lambda item: item["puntuacionRiesgo"], reverse=True)
+    if search_term:
+        agentes = [item for item in agentes if search_term in item["nombre"].lower() or search_term in item["id"].lower() or search_term in str(item["appId"]).lower() or search_term in item["plataforma"].lower()]
+    if filtro in ["riesgo", "riesgosos", "criticos"]:
+        agentes = [item for item in agentes if item["enRiesgo"]]
+    elif filtro in ["no_administrados", "no-administrados"]:
+        agentes = [item for item in agentes if item["plataforma"] in ["Terceros", "Otros"]]
+    elif filtro in ["sin_propietario", "sin-propietario", "sin-propietarios"]:
+        agentes = [item for item in agentes if item["sinPropietario"]]
+    elif filtro != "all":
+        agentes = [item for item in agentes if filtro in item["plataforma"].lower()]
+
+    return {
+        "agentes": agentes[:limit],
+        "metricasAgentMap": {
+            "totalAgentes": len(agentes),
+            "agentesSinPropietario": sum(1 for item in agentes if item["sinPropietario"]),
+            "agentesEnRiesgo": sum(1 for item in agentes if item["enRiesgo"]),
+            "agentesNoAdministrados": sum(1 for item in agentes if item["plataforma"] in ["Terceros", "Otros"]),
+        },
+    }
 
 def _clasificar_plataforma(nombre_lower: str, pub_lower: str, tags: list) -> str:
     if "agent builder" in nombre_lower or "generador de agentes" in nombre_lower or "agentbuilder" in tags:
@@ -37,6 +245,7 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         limit = int(req.params.get("limit", 50))
     except ValueError:
         limit = 50
+    limit = max(1, min(limit, 100))
 
     try:
         body = req.get_json()
@@ -50,6 +259,9 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
 
     if not filtro:
         filtro = "all"
+    if search_term in FRASES_GENERICAS_IGNORAR:
+        search_term = ""
+    limit = max(1, min(limit, 100))
 
     token = get_graph_token()
     if not token:
@@ -60,6 +272,7 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     session = create_concurrent_session(token)
+    snapshot_defender = _cargar_snapshot_defender()
 
     def fetch_copilot_catalog():
         items = []
@@ -157,6 +370,9 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             score += 30
         if str(pkg.get("riskLevel", "")).lower() == "high":
             score += 40
+        score_snapshot = _score_defender(str(nombre), snapshot_defender)
+        if score_snapshot is not None:
+            score = max(score, score_snapshot)
         score = min(score, 100)
         en_riesgo = score >= UMBRAL_RIESGO_ALTO
 
@@ -215,6 +431,10 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             score += 25
         if "HighRisk" in tags or "Status:Blocked" in tags:
             score += 35
+
+        score_snapshot = _score_defender(nombre, snapshot_defender)
+        if score_snapshot is not None:
+            score = max(score, score_snapshot)
 
         score = min(score, 100)
         en_riesgo = score >= UMBRAL_RIESGO_ALTO

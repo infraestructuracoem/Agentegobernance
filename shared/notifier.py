@@ -41,7 +41,7 @@ def construir_html_auditoria(agents_data: list, criterio: str, metricas: dict | 
         state_bg = "#1b4329" if enabled else "#3b1d1d"
         state_color = "#51cf66" if enabled else "#ff6b6b"
         score = int(item.get("puntuacionRiesgo", 70))
-        score_bg = "#d9381e" if score >= 80 else ("#f08c00" if score >= 70 else "#2b8a3e")
+        score_bg = "#d9381e" if score >= 71 else ("#f08c00" if score == 70 else "#2b8a3e")
 
         acceso_graph = html.escape(str(item.get("accesoGraphAPI", "Sí")))
         tipo_permiso = html.escape(str(item.get("tipoPermiso", "Delegado")))

@@ -1,10 +1,14 @@
 import os
 
-FUNCTION_APP_NAME = "func-gobernanza-core-v"
-CORREO_REMITENTE_TI = "bcruzn@coem.co"
-CORREO_NOTIFICACIONES_TI = "infraestructura@coem.co"
-GRUPO_GOBERNANZA_ID = "ba8dc0c6-368c-41fa-a222-67434d2ec16c"
-UMBRAL_RIESGO_ALTO = 70
+FUNCTION_APP_NAME = os.environ.get("FUNCTION_APP_NAME", "func-gobernanza-core-v")
+CORREO_REMITENTE_TI = os.environ.get("CORREO_REMITENTE_TI", "bcruzn@coem.co")
+CORREO_NOTIFICACIONES_TI = os.environ.get("CORREO_NOTIFICACIONES_TI", "infraestructura@coem.co")
+GRUPO_GOBERNANZA_ID = os.environ.get("GRUPO_GOBERNANZA_ID", "ba8dc0c6-368c-41fa-a222-67434d2ec16c")
+
+try:
+    UMBRAL_RIESGO_ALTO = int(os.environ.get("UMBRAL_RIESGO_ALTO", "70"))
+except ValueError:
+    UMBRAL_RIESGO_ALTO = 70
 
 TENANT_ID = os.environ.get("TENANT_ID") or os.environ.get("AZURE_TENANT_ID", "")
 CLIENT_ID = os.environ.get("CLIENT_ID") or os.environ.get("AZURE_CLIENT_ID", "")

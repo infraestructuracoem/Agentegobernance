@@ -1,10 +1,13 @@
 import json
+import re
 import azure.functions as func
 from shared.config import PALABRAS_PROHIBIDAS, CORREO_NOTIFICACIONES_TI, FUNCTION_APP_NAME
 from shared.graph_client import normalizar_texto, get_graph_token, create_concurrent_session
 from shared.notifier import enviar_correo_html, construir_html_evento
 
 bp_create = func.Blueprint()
+
+GUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 
 @bp_create.route(route="create-agent", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def create_agent(req: func.HttpRequest) -> func.HttpResponse:
@@ -39,6 +42,12 @@ def create_agent(req: func.HttpRequest) -> func.HttpResponse:
 
     vinculacion_estado = "Aprobado en catálogo de gobernanza (pendiente de vinculación de Object ID)"
     if agent_object_id:
+        if not GUID_PATTERN.fullmatch(agent_object_id):
+            return func.HttpResponse(
+                json.dumps({"status": "ERROR", "message": "agentObjectId debe ser un GUID válido."}, ensure_ascii=False),
+                status_code=400,
+                mimetype="application/json"
+            )
         token = get_graph_token()
         if token:
             session = create_concurrent_session(token)

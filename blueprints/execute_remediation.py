@@ -1,4 +1,5 @@
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 import azure.functions as func
 from shared.config import CORREO_NOTIFICACIONES_TI
@@ -6,6 +7,7 @@ from shared.graph_client import get_graph_token, create_concurrent_session
 from shared.notifier import enviar_correo_html, construir_html_evento
 
 bp_remediation = func.Blueprint()
+GUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 
 @bp_remediation.route(route="execute-remediation", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
@@ -23,9 +25,29 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
     tipo_accion = str(body.get("tipoAccion", "SoftDelete")).strip()
     recipient_email = str(body.get("recipientEmail", CORREO_NOTIFICACIONES_TI)).strip()
 
+    tipo_accion_normalizada = tipo_accion.lower()
+    if tipo_accion_normalizada not in ["softdelete", "soft-delete", "cuarentena", "harddelete", "delete", "eliminar"]:
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": "tipoAccion debe ser SoftDelete o HardDelete."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     if not bot_id and not search_query:
         return func.HttpResponse(
             json.dumps({"status": "ERROR", "message": "Debes proporcionar 'botId' o 'searchQuery'."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+    if bot_id and not GUID_PATTERN.fullmatch(bot_id):
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": "botId debe ser un GUID válido."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+    if len(search_query) > 200:
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": "searchQuery excede el límite permitido de 200 caracteres."}, ensure_ascii=False),
             status_code=400,
             mimetype="application/json"
         )
@@ -79,11 +101,11 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
         grants = resp_grants.json().get("value", [])
         if grants:
             def _delete_grant(gid: str):
-                session.delete(f"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{gid}", timeout=5)
+                return session.delete(f"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{gid}", timeout=5)
 
             with ThreadPoolExecutor(max_workers=5) as ex:
-                ex.map(_delete_grant, [g["id"] for g in grants if g.get("id")])
-            grants_revocados = len(grants)
+                respuestas = list(ex.map(_delete_grant, [g["id"] for g in grants if g.get("id")]))
+            grants_revocados = sum(1 for respuesta in respuestas if respuesta.status_code in [200, 204])
 
     es_borrado_total = tipo_accion.lower() in ["harddelete", "delete", "eliminar"]
     url_pkg = f"https://graph.microsoft.com/beta/copilot/admin/catalog/packages/{sp_object_id}"
