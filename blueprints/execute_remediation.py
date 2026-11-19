@@ -33,18 +33,29 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
+    es_borrado_total = tipo_accion_normalizada in ["harddelete", "delete", "eliminar"]
+    confirmacion = str(body.get("confirmHardDelete", "")).strip().lower()
+    if es_borrado_total and confirmacion != "true":
+        return func.HttpResponse(
+            json.dumps({
+                "status": "ERROR",
+                "message": "HardDelete requiere confirmación explícita mediante confirmHardDelete=true."
+            }, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     if not bot_id and not search_query:
         return func.HttpResponse(
             json.dumps({"status": "ERROR", "message": "Debes proporcionar 'botId' o 'searchQuery'."}, ensure_ascii=False),
             status_code=400,
             mimetype="application/json"
         )
-    if bot_id and not GUID_PATTERN.fullmatch(bot_id):
-        return func.HttpResponse(
-            json.dumps({"status": "ERROR", "message": "botId debe ser un GUID válido."}, ensure_ascii=False),
-            status_code=400,
-            mimetype="application/json"
-        )
+    if bot_id and GUID_PATTERN.fullmatch(bot_id):
+        search_query = ""
+    elif bot_id and not search_query:
+        search_query = bot_id.lower()
+        bot_id = ""
     if len(search_query) > 200:
         return func.HttpResponse(
             json.dumps({"status": "ERROR", "message": "searchQuery excede el límite permitido de 200 caracteres."}, ensure_ascii=False),

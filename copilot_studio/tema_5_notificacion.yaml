@@ -35,7 +35,7 @@ beginDialog:
             - kind: InvokeConnectorAction
               id: env_riesgo
               connectionReference: AI_Gateway_Gobernanza
-              operationId: send-notification
+              operationId: SendNotification
               inputs:
                 body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "auditoria", filter: "riesgo" }
               outputResult: Topic.ResNotif
@@ -49,7 +49,7 @@ beginDialog:
             - kind: InvokeConnectorAction
               id: env_no_admin
               connectionReference: AI_Gateway_Gobernanza
-              operationId: send-notification
+              operationId: SendNotification
               inputs:
                 body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "auditoria", filter: "no_administrados" }
               outputResult: Topic.ResNotif
@@ -68,7 +68,7 @@ beginDialog:
             - kind: InvokeConnectorAction
               id: env_creacion
               connectionReference: AI_Gateway_Gobernanza
-              operationId: send-notification
+              operationId: SendNotification
               inputs:
                 body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "creacion", detalleEvento: Topic.DetalleEvento }
               outputResult: Topic.ResNotif
@@ -85,7 +85,7 @@ beginDialog:
         - kind: InvokeConnectorAction
           id: env_remediacion
           connectionReference: AI_Gateway_Gobernanza
-          operationId: send-notification
+          operationId: SendNotification
           inputs:
             body: ={ recipientEmail: Topic.CorreoDestino, tipoReporte: "remediacion", detalleEvento: Topic.DetalleEventoRem }
           outputResult: Topic.ResNotif

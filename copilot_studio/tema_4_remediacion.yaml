@@ -24,13 +24,36 @@ beginDialog:
         - value: SoftDelete
         - value: HardDelete
 
-    - kind: InvokeConnectorAction
-      id: invocar_remediacion
-      connectionReference: AI_Gateway_Gobernanza
-      operationId: execute-remediation
-      inputs:
-        body: ={ botId: Topic.IdentificadorAgente, searchQuery: Topic.IdentificadorAgente, tipoAccion: Topic.TipoAccion }
-      outputResult: Topic.ResRemediacion
+    - kind: ConditionGroup
+      id: confirmar_hard_delete
+      conditions:
+        - id: requiere_confirmacion
+          condition: =Topic.TipoAccion = "HardDelete"
+          actions:
+            - kind: Question
+              id: confirmar_borrado_definitivo
+              alwaysPrompt: true
+              variable: Topic.ConfirmarHardDelete
+              prompt: "Confirmación obligatoria: el borrado definitivo elimina el agente y no se puede deshacer. Escribe CONFIRMAR o CANCELAR."
+      elseActions: []
+
+    - kind: ConditionGroup
+      id: bloquear_cancelacion_hard_delete
+      conditions:
+        - id: cancelacion_hard_delete
+          condition: =Topic.TipoAccion = "HardDelete" And Lower(Topic.ConfirmarHardDelete) <> "confirmar"
+          actions:
+            - kind: SendActivity
+              id: cancelar_hard_delete
+              activity: "Operación cancelada. No se eliminó ningún agente."
+      elseActions:
+        - kind: InvokeConnectorAction
+          id: invocar_remediacion
+          connectionReference: AI_Gateway_Gobernanza
+          operationId: ExecuteRemediation
+          inputs:
+            body: ={ botId: If(GUID(Topic.IdentificadorAgente), Topic.IdentificadorAgente, ""), searchQuery: If(GUID(Topic.IdentificadorAgente), "", Topic.IdentificadorAgente), tipoAccion: Topic.TipoAccion }
+          outputResult: Topic.ResRemediacion
 
     - kind: SendActivity
       id: mostrar_resultado_remediacion

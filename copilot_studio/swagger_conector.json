@@ -14,7 +14,7 @@
     "/evaluate-prompt": {
       "post": {
         "summary": "Evaluar Prompt DLP",
-        "operationId": "evaluate-prompt",
+        "operationId": "EvaluatePrompt",
         "parameters": [
           {
             "name": "body",
@@ -49,7 +49,7 @@
     "/create-agent": {
       "post": {
         "summary": "Aprobar y Desplegar Agente",
-        "operationId": "create-agent",
+        "operationId": "CreateAgent",
         "parameters": [
           {
             "name": "body",
@@ -82,21 +82,57 @@
       }
     },
     "/get-full-audit": {
+      "get": {
+        "summary": "Ejecutar auditoría general de todos los agentes",
+        "description": "Audita toda la organización inmediatamente. No requiere filtro ni término de búsqueda. Usa esta operación para auditorías generales.",
+        "operationId": "GetFullAuditGeneral",
+        "responses": {
+          "200": {
+            "description": "Resultado de auditoría global",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "respuestaEjecutiva": { "type": "string" },
+                "estadoCobertura": { "type": "string" },
+                "tiempoRespuestaSegundos": { "type": "number" },
+                "totalFiltrados": { "type": "integer" },
+                "metricasAgentMap": { "type": "object" },
+                "fuentes": { "type": "object" }
+              }
+            }
+          }
+        }
+      },
       "post": {
-        "summary": "Auditoría Global y Filtrada de Agentes",
-        "operationId": "get-full-audit",
+        "summary": "Buscar o filtrar agentes",
+        "description": "Usa esta operación solo cuando el usuario solicite explícitamente una búsqueda o un subconjunto. Para auditoría general usa GetFullAuditGeneral.",
+        "operationId": "GetFullAuditFiltered",
         "parameters": [
           {
             "name": "body",
             "in": "body",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "object",
               "properties": {
-                "filter": { "type": "string" },
-                "search": { "type": "string" },
-                "limit": { "type": "integer" }
-              }
+                "filter": {
+                  "type": "string",
+                  "description": "all, riesgo, no_administrados o sin_propietario",
+                  "enum": ["all", "riesgo", "no_administrados", "sin_propietario"],
+                  "default": "all"
+                },
+                "search": {
+                  "type": "string",
+                  "description": "Nombre, Object ID o App ID; omitir para no buscar por nombre",
+                  "default": ""
+                },
+                "limit": {
+                  "type": "integer",
+                  "description": "Máximo de resultados a mostrar",
+                  "default": 50
+                }
+              },
+              "required": ["filter"]
             }
           }
         ],
@@ -118,7 +154,7 @@
     "/execute-remediation": {
       "post": {
         "summary": "Ejecutar Remediación / Cuarentena SOC",
-        "operationId": "execute-remediation",
+        "operationId": "ExecuteRemediation",
         "parameters": [
           {
             "name": "body",
@@ -129,9 +165,19 @@
               "properties": {
                 "botId": { "type": "string" },
                 "searchQuery": { "type": "string" },
-                "tipoAccion": { "type": "string" },
+                "tipoAccion": {
+                  "type": "string",
+                  "enum": ["SoftDelete", "HardDelete"],
+                  "default": "SoftDelete"
+                },
+                "confirmHardDelete": {
+                  "type": "boolean",
+                  "description": "Debe ser true para ejecutar HardDelete. Solo enviar tras confirmación explícita del usuario.",
+                  "default": false
+                },
                 "recipientEmail": { "type": "string" }
-              }
+              },
+              "description": "Proporciona botId o searchQuery. HardDelete requiere confirmHardDelete=true."
             }
           }
         ],
@@ -153,7 +199,7 @@
     "/send-notification": {
       "post": {
         "summary": "Enviar Notificación HTML (Auditoría, Creación o Remediación)",
-        "operationId": "send-notification",
+        "operationId": "SendNotification",
         "parameters": [
           {
             "name": "body",
@@ -163,8 +209,16 @@
               "type": "object",
               "properties": {
                 "recipientEmail": { "type": "string" },
-                "tipoReporte": { "type": "string" },
-                "filter": { "type": "string" },
+                "tipoReporte": {
+                  "type": "string",
+                  "enum": ["auditoria", "creacion", "remediacion"],
+                  "default": "auditoria"
+                },
+                "filter": {
+                  "type": "string",
+                  "enum": ["riesgo", "no_administrados", "sin_propietario", "all"],
+                  "default": "riesgo"
+                },
                 "search": { "type": "string" },
                 "detalleEvento": { "type": "string" }
               },

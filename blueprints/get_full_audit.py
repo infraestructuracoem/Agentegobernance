@@ -7,15 +7,28 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 import azure.functions as func
 from shared.config import UMBRAL_RIESGO_ALTO, PERMISOS_ALTO_IMPACTO
-from shared.graph_client import get_graph_token, create_concurrent_session
+from shared.graph_client import get_graph_token, create_concurrent_session, normalizar_texto
 
 bp_audit = func.Blueprint()
 
 FRASES_GENERICAS_IGNORAR = {
+    "all",
+    "todos",
+    "todas",
+    "todo",
     "agentes en riesgo",
     "todos los agentes",
+    "all agents",
+    "all agents inventory",
     "lista de agentes",
     "auditoria",
+    "auditoria de agentes",
+    "auditoria general",
+    "auditoria general de agentes",
+    "auditoria total de agentes",
+    "auditoria completa de agentes",
+    "auditar agentes",
+    "resumen de gobernanza",
     "auditoria global",
 }
 
@@ -26,14 +39,16 @@ def _cargar_snapshot_defender() -> dict:
         with open(ruta, "r", encoding="utf-8-sig", newline="") as archivo:
             archivo.readline()
             for linea in archivo:
-                coincidencia = re.match(r'^"?([^",]+),[^,]+,([0-9]+),', linea)
+                coincidencia = re.match(r'^"((?:[^"]|"")*)",[^,]+,([0-9]+),', linea)
+                if not coincidencia:
+                    coincidencia = re.match(r'^([^,]+),[^,]+,([0-9]+),', linea)
                 if not coincidencia:
                     continue
-                nombre = coincidencia.group(1).strip().lower()
+                nombre = coincidencia.group(1).replace('""', '"').strip().lower()
                 if not nombre:
                     continue
                 score = int(coincidencia.group(2))
-                snapshot[nombre] = max(0, min(score, 100))
+                snapshot[nombre] = max(snapshot.get(nombre, 0), max(0, min(score, 100)))
     except (OSError, csv.Error):
         return {}
     return snapshot
@@ -49,9 +64,10 @@ def _score_defender(nombre: str, snapshot: dict) -> int | None:
 
 def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", limit: int = 100) -> dict:
     start = time.time()
+    max_time = 55.0
     limit = max(1, min(limit, 100))
     filtro = (filtro or "all").strip().lower()
-    search_term = (search_term or "").strip().lower()
+    search_term = normalizar_texto(search_term or "")
     if search_term in FRASES_GENERICAS_IGNORAR:
         search_term = ""
 
@@ -65,7 +81,7 @@ def ejecutar_inventario_concurrente(filtro: str = "all", search_term: str = "", 
     def fetch_items(url: str, timeout: int = 5):
         items = []
         pages = 0
-        while url and pages < 45 and (time.time() - start) < 19.0:
+        while url and pages < 45 and (time.time() - start) < max_time:
             try:
                 response = session.get(url, timeout=timeout)
                 if response.status_code != 200:
@@ -237,10 +253,10 @@ def _clasificar_plataforma(nombre_lower: str, pub_lower: str, tags: list) -> str
 @bp_audit.route(route="get-full-audit", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET", "POST"])
 def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()
-    MAX_TIME = 19.0
+    MAX_TIME = 55.0
 
     filtro = str(req.params.get("filter", "")).strip().lower()
-    search_term = str(req.params.get("search", "")).strip().lower()
+    search_term = normalizar_texto(req.params.get("search", ""))
     try:
         limit = int(req.params.get("limit", 50))
     except ValueError:
@@ -251,7 +267,7 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
         if isinstance(body, dict):
             filtro = str(body.get("filter", filtro)).strip().lower()
-            search_term = str(body.get("search", search_term)).strip().lower()
+            search_term = normalizar_texto(body.get("search", search_term))
             if "limit" in body and body["limit"] is not None:
                 limit = int(body["limit"])
     except Exception:
@@ -276,12 +292,21 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
 
     def fetch_copilot_catalog():
         items = []
-        url = "https://graph.microsoft.com/beta/copilot/admin/catalog/packages?$top=999"
+        completos = True
+        catalog_base = "https://graph.microsoft.com/beta/copilot/admin/catalog/packages?$top=999"
+        if search_term:
+            nombre_odata = search_term.replace("'", "''")
+            catalog_base = (
+                "https://graph.microsoft.com/beta/copilot/admin/catalog/packages"
+                f"?$filter=displayName eq '{nombre_odata}'&$top=999"
+            )
+        url = catalog_base
         pages = 0
         while url and pages < 10 and (time.time() - start_time) < MAX_TIME:
             try:
                 resp = session.get(url, timeout=5)
                 if resp.status_code != 200:
+                    completos = False
                     break
                 data = resp.json()
                 for pkg in data.get("value", []):
@@ -289,37 +314,51 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
                 url = data.get("@odata.nextLink")
                 pages += 1
             except Exception:
+                completos = False
                 break
-        return items
+        return items, completos
 
     def fetch_service_principals():
         items = []
-        url = (
+        completos = True
+        sp_base = (
             "https://graph.microsoft.com/v1.0/servicePrincipals"
             "?$top=100&$select=id,displayName,appId,tags,accountEnabled,publisherName,verifiedPublisher,servicePrincipalType"
         )
+        if search_term:
+            nombre_odata = search_term.replace("'", "''")
+            sp_base = (
+                "https://graph.microsoft.com/v1.0/servicePrincipals"
+                f"?$filter=displayName eq '{nombre_odata}'"
+                "&$top=100&$select=id,displayName,appId,tags,accountEnabled,publisherName,verifiedPublisher,servicePrincipalType"
+            )
+        url = sp_base
         pages = 0
         while url and pages < 45 and (time.time() - start_time) < MAX_TIME:
             try:
                 resp = session.get(url, timeout=5)
                 if resp.status_code != 200:
+                    completos = False
                     break
                 data = resp.json()
                 items.extend(data.get("value", []))
                 url = data.get("@odata.nextLink")
                 pages += 1
             except Exception:
+                completos = False
                 break
-        return items
+        return items, completos
 
     def fetch_oauth_grants():
         grants_map = {}
+        completos = True
         url = "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$top=999"
         pages = 0
         while url and pages < 10 and (time.time() - start_time) < MAX_TIME:
             try:
                 resp = session.get(url, timeout=5)
                 if resp.status_code != 200:
+                    completos = False
                     break
                 data = resp.json()
                 for g in data.get("value", []):
@@ -334,17 +373,18 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
                 url = data.get("@odata.nextLink")
                 pages += 1
             except Exception:
+                completos = False
                 break
-        return grants_map
+        return grants_map, completos
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         f_cat = executor.submit(fetch_copilot_catalog)
         f_sp = executor.submit(fetch_service_principals)
         f_grants = executor.submit(fetch_oauth_grants)
 
-        raw_catalog = f_cat.result()
-        raw_sps = f_sp.result()
-        grants_map = f_grants.result()
+        raw_catalog, catalog_completo = f_cat.result()
+        raw_sps, sps_completo = f_sp.result()
+        grants_map, grants_completos = f_grants.result()
 
     agentes_unificados = []
     ids_vistos = set()
@@ -489,6 +529,8 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
 
     muestra = filtrados[:max(1, min(limit, 100))]
     elapsed = round(time.time() - start_time, 2)
+    cobertura_completa = catalog_completo and sps_completo and grants_completos
+    estado_cobertura = "COMPLETA" if cobertura_completa else "PARCIAL"
 
     def fmt_num(n: int) -> str:
         return f"{n:,}".replace(",", ".")
@@ -496,8 +538,8 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
     if filtro == "all" and not search_term:
         respuesta_ejecutiva = (
             "ESTADO DE VALIDACIÓN\n"
-            "- ESTADO: APPROVED\n"
-            "- Firma digital: SIG_GOV_APPROVED_OK\n\n"
+            f"- ESTADO: {'APPROVED' if cobertura_completa else 'PARCIAL - NO CONCLUIR LA AUDITORÍA'}\n"
+            f"- Firma digital: {'SIG_GOV_APPROVED_OK' if cobertura_completa else 'SIG_GOV_PARTIAL_COVERAGE'}\n\n"
             "RESUMEN EJECUTIVO\n"
             f"- Total de agentes inventariados: {fmt_num(total_org)}\n"
             f"- Agentes en riesgo (Puntuación ≥ {UMBRAL_RIESGO_ALTO}): {fmt_num(total_riesgo)}\n"
@@ -514,6 +556,10 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
             f"- Se detectan {fmt_num(total_riesgo)} agentes clasificados en riesgo alto con puntuación ≥ {UMBRAL_RIESGO_ALTO}.\n"
             f"- Se identifica un volumen elevado de agentes no administrados ({fmt_num(total_no_admin)}).\n"
             "- Existen múltiples Service Principals asociados a Copilot Studio y Azure AI Foundry con acceso activo a Microsoft Graph.\n\n"
+            "COBERTURA DE FUENTES\n"
+            f"- Catálogo Copilot: {'COMPLETA' if catalog_completo else 'PARCIAL'}.\n"
+            f"- Service Principals: {'COMPLETA' if sps_completo else 'PARCIAL'}.\n"
+            f"- OAuth2 Permission Grants: {'COMPLETA' if grants_completos else 'PARCIAL'}.\n\n"
             "PERÍMETRO ANALIZADO\n"
             "- Entra ID, Microsoft Defender Cloud Apps, Microsoft 365 y Microsoft Purview DSPM.\n"
             f"- Tiempo de análisis concurrente: {elapsed}s."
@@ -532,7 +578,9 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         respuesta_ejecutiva = (
             f"RESULTADOS DE AUDITORÍA ESPECÍFICA ({criterio_lbl})\n"
             f"- Coincidencias encontradas: {fmt_num(len(filtrados))} (Mostrando top {min(len(muestra), 20)} ordenados por mayor riesgo)\n"
-            f"- Firma digital: SIG_GOV_APPROVED_OK\n\n"
+            f"- Cobertura: {estado_cobertura} (Catálogo Copilot: {'COMPLETA' if catalog_completo else 'PARCIAL'}; "
+            f"Service Principals: {'COMPLETA' if sps_completo else 'PARCIAL'}; OAuth2 Permission Grants: {'COMPLETA' if grants_completos else 'PARCIAL'}).\n"
+            f"- Firma digital: {'SIG_GOV_APPROVED_OK' if cobertura_completa else 'SIG_GOV_PARTIAL_COVERAGE'}\n\n"
             f"{listado_txt}"
         )
 
@@ -540,6 +588,12 @@ def get_full_audit(req: func.HttpRequest) -> func.HttpResponse:
         "respuestaEjecutiva": respuesta_ejecutiva,
         "perimetroGobernanza": "Toda la Organización (Purview, Defender, Entra ID & M365)",
         "tiempoRespuestaSegundos": elapsed,
+        "estadoCobertura": estado_cobertura,
+        "fuentes": {
+            "catalogoCopilot": "COMPLETA" if catalog_completo else "PARCIAL",
+            "servicePrincipals": "COMPLETA" if sps_completo else "PARCIAL",
+            "oauth2PermissionGrants": "COMPLETA" if grants_completos else "PARCIAL"
+        },
         "metricasAgentMap": {
             "totalAgentes": total_org,
             "agentesSinPropietario": total_sin_prop,

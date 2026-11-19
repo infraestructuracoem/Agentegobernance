@@ -17,7 +17,7 @@ beginDialog:
     - kind: InvokeConnectorAction
       id: invocar_evaluate_prompt
       connectionReference: AI_Gateway_Gobernanza
-      operationId: evaluate-prompt
+      operationId: EvaluatePrompt
       inputs:
         body: ={ prompt: Topic.PromptEvaluar, userId: System.User.Email }
       outputResult: Topic.ResDLP

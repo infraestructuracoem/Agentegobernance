@@ -4,85 +4,23 @@ beginDialog:
   id: tema_auditoria_unificada
   intent:
     triggerQueries:
+      - auditoria de agentes
+      - auditoría de agentes
+      - auditar agentes
+      - auditoria completa de agentes
+      - auditoría completa de agentes
       - auditoria total de agentes
       - auditoria general de agentes
+      - auditoria general
       - resumen de gobernanza
       - inventario de agentes
   actions:
     - kind: InvokeConnectorAction
       id: invocar_auditoria_general
       connectionReference: AI_Gateway_Gobernanza
-      operationId: get-full-audit
-      inputs:
-        body: ={ filter: "all" }
+      operationId: GetFullAuditGeneral
       outputResult: Topic.ResAuditoria
 
     - kind: SendActivity
       id: mostrar_auditoria_general
       activity: "{Topic.ResAuditoria.respuestaEjecutiva}"
-
-    - kind: Question
-      id: menu_filtro_especifico
-      alwaysPrompt: true
-      variable: Topic.AccionDetalle
-      prompt: "¿Deseas consultar un subconjunto específico de acuerdo con estos indicadores?"
-      choices:
-        - value: Ver agentes en riesgo (≥ 70)
-        - value: Ver agentes no administrados
-        - value: Buscar un agente por nombre o ID
-        - value: Finalizar consulta
-
-    - kind: ConditionGroup
-      id: evaluar_filtro_especifico
-      conditions:
-        - id: rama_riesgo
-          condition: =Topic.AccionDetalle = "Ver agentes en riesgo (≥ 70)"
-          actions:
-            - kind: InvokeConnectorAction
-              id: consultar_riesgo
-              connectionReference: AI_Gateway_Gobernanza
-              operationId: get-full-audit
-              inputs:
-                body: ={ filter: "riesgo", limit: 20 }
-              outputResult: Topic.ResRiesgo
-            - kind: SendActivity
-              id: mostrar_riesgo
-              activity: "{Topic.ResRiesgo.respuestaEjecutiva}"
-
-        - id: rama_no_admin
-          condition: =Topic.AccionDetalle = "Ver agentes no administrados"
-          actions:
-            - kind: InvokeConnectorAction
-              id: consultar_no_admin
-              connectionReference: AI_Gateway_Gobernanza
-              operationId: get-full-audit
-              inputs:
-                body: ={ filter: "no_administrados", limit: 20 }
-              outputResult: Topic.ResNoAdmin
-            - kind: SendActivity
-              id: mostrar_no_admin
-              activity: "{Topic.ResNoAdmin.respuestaEjecutiva}"
-
-        - id: rama_buscar
-          condition: =Topic.AccionDetalle = "Buscar un agente por nombre o ID"
-          actions:
-            - kind: Question
-              id: pedir_busqueda
-              alwaysPrompt: true
-              variable: Topic.TerminoBusqueda
-              prompt: "Escribe el nombre, plataforma o Object ID del agente a consultar:"
-            - kind: InvokeConnectorAction
-              id: consultar_busqueda
-              connectionReference: AI_Gateway_Gobernanza
-              operationId: get-full-audit
-              inputs:
-                body: ={ search: Topic.TerminoBusqueda, limit: 15 }
-              outputResult: Topic.ResBusqueda
-            - kind: SendActivity
-              id: mostrar_busqueda
-              activity: "{Topic.ResBusqueda.respuestaEjecutiva}"
-
-      elseActions:
-        - kind: SendActivity
-          id: cierre_auditoria
-          activity: "Auditoría finalizada. Firma: `SIG_GOV_APPROVED_OK`."

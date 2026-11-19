@@ -24,7 +24,7 @@ beginDialog:
     - kind: InvokeConnectorAction
       id: invocar_create_agent
       connectionReference: AI_Gateway_Gobernanza
-      operationId: create-agent
+      operationId: CreateAgent
       inputs:
         body: ={ solicitud: Topic.SolicitudAgente, agentObjectId: If(Lower(Topic.ObjectIdAgente) = "ninguno", "", Topic.ObjectIdAgente) }
       outputResult: Topic.ResCreacion
