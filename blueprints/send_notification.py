@@ -75,7 +75,8 @@ def send_notification(req: func.HttpRequest) -> func.HttpResponse:
             )
         agentes = auditoria.get("agentes", [])
         metricas = auditoria.get("metricasAgentMap", {})
-        metricas["coberturaPermisosAplicacion"] = "NO EVALUADOS (appRoleAssignments)"
+        metricas["coberturaPermisosAplicacion"] = auditoria.get("coberturaPermisosAplicacion", "PARCIAL")
+        metricas["coberturaFuentes"] = auditoria.get("estadoCobertura", "PARCIAL")
         criterio = (f"BÚSQUEDA: {search_term}" if search_term else f"FILTRO: {filtro}").upper()
         html_body = construir_html_auditoria(agents_data=agentes, criterio=criterio, metricas=metricas)
         asunto = f"Reporte de Gobernanza IA ({criterio}) - {len(agentes)} registros"
@@ -86,7 +87,7 @@ def send_notification(req: func.HttpRequest) -> func.HttpResponse:
         respuesta_ejecutiva = (
             "NOTIFICACIÓN ENVIADA EXITOSAMENTE\n"
             "- ESTADO: SUCCESS\n"
-            "- Firma digital: SIG_GOV_NOTIFY_OK\n"
+            "- Este mensaje no constituye una firma digital.\n"
             f"- Tipo de Reporte: {tipo_reporte.upper()}\n"
             f"- Destinatario: {recipient}\n"
             f"- Contenido: {resumen_registros}"

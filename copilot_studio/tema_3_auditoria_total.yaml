@@ -14,16 +14,62 @@ beginDialog:
       - auditoria general
       - resumen de gobernanza
       - inventario de agentes
+      - buscar agente
+      - buscar aplicación
+      - buscar aplicacion
+      - aplicaciones de inteligencia artificial
+      - agentes en riesgo
   actions:
+    - kind: Question
+      id: pedir_filtro_auditoria
+      alwaysPrompt: true
+      variable: Topic.FiltroAuditoria
+      prompt:
+        text:
+          - "¿Qué inventario deseas consultar?"
+        quickReplies:
+          - kind: MessageBack
+            title: Todos los aplicativos
+            text: all
+          - kind: MessageBack
+            title: Posibles agentes o aplicativos de IA
+            text: ia
+          - kind: MessageBack
+            title: Agentes del catálogo de Microsoft 365
+            text: agentes
+          - kind: MessageBack
+            title: Aplicativos en riesgo
+            text: riesgo
+          - kind: MessageBack
+            title: Aplicaciones de Entra ID
+            text: aplicaciones
+          - kind: MessageBack
+            title: Recursos de Azure AI
+            text: azure_ai
+          - kind: MessageBack
+            title: Aplicaciones observadas por Defender
+            text: defender
+      entity: StringPrebuiltEntity
+
+    - kind: Question
+      id: pedir_busqueda_auditoria
+      alwaysPrompt: true
+      variable: Topic.BusquedaAuditoria
+      prompt: "Escribe el nombre, ID de objeto, App ID o descripción. Para listar sin búsqueda, escribe 'ninguno':"
+      entity: StringPrebuiltEntity
+
     - kind: InvokeConnectorAction
       id: invocar_get_full_audit
       connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.66aee60cbaef4ebe9907d88730ade18a
       connectionProperties:
         mode: Maker
-      operationId: GetFullAudit
+      operationId: GetFullAuditFiltered
       input:
         binding:
-          filter: ="all"
+          filter: =Topic.FiltroAuditoria
+          search: =If(Lower(Trim(Topic.BusquedaAuditoria)) = "ninguno", "", Trim(Topic.BusquedaAuditoria))
+          limit: =100
+          offset: =0
       output:
         kind: SingleVariableOutputBinding
         variable: Topic.ResAuditoria

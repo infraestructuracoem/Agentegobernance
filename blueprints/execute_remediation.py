@@ -6,6 +6,7 @@ import azure.functions as func
 from shared.config import CORREO_NOTIFICACIONES_TI
 from shared.graph_client import get_graph_token, create_concurrent_session
 from shared.notifier import enviar_correo_html, construir_html_evento
+from shared.agent_approval import validar_aprobacion_operacion
 
 bp_remediation = func.Blueprint()
 GUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -32,6 +33,7 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
     search_query = str(body.get("searchQuery", "")).strip()
     tipo_accion = str(body.get("tipoAccion", "SoftDelete")).strip()
     recipient_email = str(body.get("recipientEmail", CORREO_NOTIFICACIONES_TI)).strip()
+    approval_token = str(body.get("approvalToken", "")).strip()
 
     tipo_accion_normalizada = tipo_accion.lower()
     if tipo_accion_normalizada not in ["softdelete", "harddelete"]:
@@ -131,6 +133,20 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
+    approval_action = "hard-delete-agent" if es_borrado_total else "quarantine-agent"
+    aprobado, approval_status, approval_message = validar_aprobacion_operacion(
+        approval_token,
+        approval_action,
+        sp_object_id,
+        tipo_accion_normalizada,
+    )
+    if not aprobado:
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": approval_message}, ensure_ascii=False),
+            status_code=approval_status,
+            mimetype="application/json"
+        )
+
     grants = []
     url_grants = "https://graph.microsoft.com/v1.0/oauth2PermissionGrants"
     params = {"$filter": f"clientId eq '{sp_object_id}'"}
@@ -154,21 +170,52 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    def _delete_grant(gid: str) -> tuple[str, int | None]:
-        try:
-            response = session.delete(
-                f"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{gid}",
-                timeout=5
-            )
-            return gid, response.status_code
-        except requests.RequestException:
-            return gid, None
+    application_grants = []
+    url_app_grants = f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_object_id}/appRoleAssignments?$top=999"
+    try:
+        while url_app_grants:
+            response = session.get(url_app_grants, timeout=5)
+            if response.status_code != 200:
+                return func.HttpResponse(
+                    json.dumps({"status": "ERROR", "message": f"No se pudieron consultar todas las asignaciones de permisos de aplicación (HTTP {response.status_code}); no se realizó la remediación."}, ensure_ascii=False),
+                    status_code=502,
+                    mimetype="application/json"
+                )
+            data = response.json()
+            application_grants.extend(data.get("value", []))
+            url_app_grants = data.get("@odata.nextLink")
+    except (requests.RequestException, ValueError) as ex:
+        return func.HttpResponse(
+            json.dumps({"status": "ERROR", "message": f"Error al consultar asignaciones de permisos de aplicación: {str(ex)}; no se realizó la remediación."}, ensure_ascii=False),
+            status_code=502,
+            mimetype="application/json"
+        )
 
-    grant_ids = [str(grant["id"]) for grant in grants if grant.get("id")]
+    def _delete_permission(endpoint: str) -> tuple[str, int | None]:
+        try:
+            response = session.delete(endpoint, timeout=5)
+            return endpoint.rsplit("/", 1)[-1], response.status_code
+        except requests.RequestException:
+            return endpoint.rsplit("/", 1)[-1], None
+
+    permission_endpoints = [
+        f"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{grant['id']}"
+        for grant in grants if grant.get("id")
+    ] + [
+        f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_object_id}/appRoleAssignments/{grant['id']}"
+        for grant in application_grants if grant.get("id")
+    ]
     with ThreadPoolExecutor(max_workers=5) as executor:
-        grant_results = list(executor.map(_delete_grant, grant_ids))
-    grants_revocados = sum(1 for _, status in grant_results if status in [200, 204])
-    grants_fallidos = len(grant_results) - grants_revocados
+        permission_results = list(executor.map(_delete_permission, permission_endpoints))
+    delegated_revoked = sum(
+        1 for endpoint, (_, status) in zip(permission_endpoints, permission_results)
+        if "/oauth2PermissionGrants/" in endpoint and status in [200, 204]
+    )
+    application_revoked = sum(
+        1 for endpoint, (_, status) in zip(permission_endpoints, permission_results)
+        if "/appRoleAssignments/" in endpoint and status in [200, 204]
+    )
+    permission_failures = len(permission_results) - delegated_revoked - application_revoked
 
     url_pkg = f"https://graph.microsoft.com/beta/copilot/admin/catalog/packages/{sp_object_id}"
     url_sp_target = f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_object_id}"
@@ -186,7 +233,7 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({
                 "status": "PARTIAL",
-                "message": f"Error de red durante la remediación; concesiones revocadas: {grants_revocados}, fallidas: {grants_fallidos}. Se requiere verificación manual.",
+                "message": f"Error de red durante la remediación; permisos delegados revocados: {delegated_revoked}, permisos de aplicación revocados: {application_revoked}, fallidos: {permission_failures}. Se requiere verificación manual.",
                 "error": str(ex)
             }, ensure_ascii=False),
             status_code=502,
@@ -195,7 +242,7 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
 
     catalog_ok = resp_pkg.status_code in [200, 202, 204, 404]
     principal_ok = resp_action.status_code in [200, 202, 204]
-    if not catalog_ok or not principal_ok or grants_fallidos:
+    if not catalog_ok or not principal_ok or permission_failures:
         return func.HttpResponse(
             json.dumps({
                 "status": "PARTIAL",
@@ -203,8 +250,9 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
                 "servicePrincipalStatus": resp_action.status_code,
                 "catalogStatus": resp_pkg.status_code,
                 "catalogPackageFound": resp_pkg.status_code != 404,
-                "grantsRevocados": grants_revocados,
-                "grantsFallidos": grants_fallidos
+                "permisosDelegadosRevocados": delegated_revoked,
+                "permisosAplicacionRevocados": application_revoked,
+                "permisosFallidos": permission_failures
             }, ensure_ascii=False),
             status_code=502,
             mimetype="application/json"
@@ -219,7 +267,8 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
             "Object ID": sp_object_id,
             "Medida Aplicada": accion_txt,
             "Tipo de Operación": tipo_accion,
-            "Concesiones OAuth2 Revocadas": grants_revocados
+            "Permisos delegados revocados": delegated_revoked,
+            "Permisos de aplicación revocados": application_revoked
         }
     )
     enviado, msg_correo = enviar_correo_html(
@@ -228,15 +277,19 @@ def execute_remediation(req: func.HttpRequest) -> func.HttpResponse:
         destinatario=recipient_email
     )
 
-    msg = f"El agente '{sp_name}' (ID: {sp_object_id}) fue {accion_txt}. Permisos OAuth2 revocados: {grants_revocados}."
+    msg = (
+        f"El agente '{sp_name}' (ID: {sp_object_id}) fue {accion_txt}. "
+        f"Permisos delegados revocados: {delegated_revoked}; permisos de aplicación revocados: {application_revoked}."
+    )
     respuesta_ejecutiva = (
         "REMEDIACIÓN SOC EJECUTADA\n"
         "- ESTADO: SUCCESS\n"
-        "- Firma: SIG_GOV_REMEDIATION_OK\n"
+        "- Este resultado no constituye una firma digital.\n"
         f"- Agente: {sp_name}\n"
         f"- Object ID: {sp_object_id}\n"
         f"- Acción Aplicada: {accion_txt}\n"
-        f"- Concesiones Graph API Revocadas: {grants_revocados}\n"
+        f"- Permisos delegados revocados: {delegated_revoked}\n"
+        f"- Permisos de aplicación revocados: {application_revoked}\n"
         f"- Catálogo de Copilot: {'Actualizado' if resp_pkg.status_code != 404 else 'Sin paquete asociado'}\n"
         f"- Notificación SOC: {msg_correo}"
     )

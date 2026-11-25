@@ -72,7 +72,11 @@
               "properties": {
                 "solicitud": { "type": "string" },
                 "agentObjectId": { "type": "string" },
-                "recipientEmail": { "type": "string" }
+                "recipientEmail": { "type": "string" },
+                "approvalToken": {
+                  "type": "string",
+                  "description": "Token firmado por el servicio de aprobación. Formato base64url(payload JSON).base64url(HMAC-SHA256 del primer segmento). El payload incluye action, targetId, detailsSha256, approvedBy, approvalId, issuedAt y expiresAt; para crear, action=deploy-agent, targetId=agentObjectId y detailsSha256=SHA-256(solicitud UTF-8); vigencia máxima 10 minutos."
+                }
               },
               "required": ["solicitud"]
             }
@@ -89,14 +93,20 @@
                 "respuestaEjecutiva": { "type": "string" }
               }
             }
+          },
+          "403": {
+            "description": "Aprobación firmada inválida, vencida o no autorizada"
+          },
+          "503": {
+            "description": "Despliegue deshabilitado por configuración de aprobación ausente"
           }
         }
       }
     },
     "/get-full-audit": {
       "get": {
-        "summary": "Ejecutar auditoría general de todos los agentes",
-        "description": "Audita toda la organización inmediatamente. No requiere filtro ni término de búsqueda. Usa esta operación para auditorías generales.",
+        "summary": "Consultar resumen del inventario de agentes",
+        "description": "Devuelve un resumen del inventario unificado y las fuentes de datos. Para buscar o filtrar resultados, usa GetFullAuditFiltered.",
         "operationId": "GetFullAuditGeneral",
         "responses": {
           "200": {
@@ -117,8 +127,8 @@
         }
       },
       "post": {
-        "summary": "Buscar o filtrar agentes",
-        "description": "Usa esta operación solo cuando el usuario solicite explícitamente una búsqueda o un subconjunto. Para auditoría general usa GetFullAuditGeneral.",
+        "summary": "Buscar aplicativos, agentes de IA y recursos empresariales",
+        "description": "Busca en nombres, identificadores, App IDs, descripciones y plataformas del inventario de Entra ID, Microsoft 365 Agent 365 Package Management, Azure Resource Graph y Defender XDR. Agent 365 requiere licencia y CopilotPackages.Read.All; las conexiones de terceros deben estar configuradas y sincronizadas en el centro de administración. El filtro ia devuelve candidatos detectados por metadatos, no una certificación.",
         "operationId": "GetFullAuditFiltered",
         "parameters": [
           {
@@ -130,19 +140,24 @@
               "properties": {
                 "filter": {
                   "type": "string",
-                  "description": "all, riesgo, no_administrados o sin_propietario",
-                  "enum": ["all", "riesgo", "no_administrados", "sin_propietario"],
+                  "description": "all, ia, agentes, riesgo, aplicaciones, azure_ai, defender, no_administrados o sin_propietario",
+                  "enum": ["all", "ia", "agentes", "riesgo", "aplicaciones", "azure_ai", "defender", "no_administrados", "sin_propietario"],
                   "default": "all"
                 },
                 "search": {
                   "type": "string",
-                  "description": "Nombre, Object ID o App ID; omitir para no buscar por nombre",
+                  "description": "Nombre, Object ID, App ID, descripción o plataforma; omitir para no buscar por texto",
                   "default": ""
                 },
                 "limit": {
                   "type": "integer",
-                  "description": "Máximo de resultados a mostrar",
-                  "default": 50
+                  "description": "Máximo 500 resultados por página",
+                  "default": 100
+                },
+                "offset": {
+                  "type": "integer",
+                  "description": "Número de resultados a omitir para paginar",
+                  "default": 0
                 }
               },
               "required": ["filter"]
@@ -156,8 +171,17 @@
               "type": "object",
               "properties": {
                 "respuestaEjecutiva": { "type": "string" },
+                "status": { "type": "string" },
+                "estadoCobertura": { "type": "string" },
+                "fuentes": { "type": "object" },
+                "metricasGlobales": { "type": "object" },
+                "coberturaPermisosAplicacion": { "type": "string" },
                 "tiempoRespuestaSegundos": { "type": "number" },
-                "totalFiltrados": { "type": "integer" }
+                "totalFiltrados": { "type": "integer" },
+                "limit": { "type": "integer" },
+                "offset": { "type": "integer" },
+                "tieneMasResultados": { "type": "boolean" },
+                "agentes": { "type": "array", "items": { "type": "object" } }
               }
             }
           }
@@ -188,9 +212,14 @@
                   "description": "Debe ser true para ejecutar HardDelete. Solo enviar tras confirmación explícita del usuario.",
                   "default": false
                 },
-                "recipientEmail": { "type": "string" }
+                "recipientEmail": { "type": "string" },
+                "approvalToken": {
+                  "type": "string",
+                  "description": "Obligatorio para toda remediación. Token HMAC firmado, limitado al targetId del service principal, action=quarantine-agent o hard-delete-agent y detailsSha256=SHA-256(tipoAccion en minúsculas)."
+                }
               },
-              "description": "Proporciona botId o searchQuery. HardDelete requiere confirmHardDelete=true."
+              "description": "Proporciona botId o searchQuery y una aprobación firmada para la acción y el service principal resuelto. HardDelete también requiere confirmHardDelete=true.",
+              "required": ["approvalToken"]
             }
           }
         ],
@@ -205,6 +234,12 @@
                 "respuestaEjecutiva": { "type": "string" }
               }
             }
+          },
+          "403": {
+            "description": "Aprobación firmada inválida, vencida o no autorizada"
+          },
+          "503": {
+            "description": "Remediación deshabilitada por configuración de aprobación ausente"
           }
         }
       }
