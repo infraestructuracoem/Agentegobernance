@@ -1,13 +1,33 @@
 import html
+import re
 import requests
 from datetime import datetime, timezone
-from shared.config import CORREO_REMITENTE_TI, CORREO_NOTIFICACIONES_TI, FUNCTION_APP_NAME
+from shared.config import (
+    ALLOWED_NOTIFICATION_DOMAINS,
+    CORREO_REMITENTE_TI,
+    CORREO_NOTIFICACIONES_TI,
+    FUNCTION_APP_NAME,
+)
 from shared.graph_client import get_graph_token, create_concurrent_session
+
+
+def _validar_destinatario(destinatario: str) -> bool:
+    if not destinatario or destinatario.count("@") != 1 or any(char.isspace() for char in destinatario):
+        return False
+    local, domain = destinatario.rsplit("@", 1)
+    if not local or len(local) > 64 or len(destinatario) > 254:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+", local):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9.-]+", domain) or ".." in domain:
+        return False
+    return domain.lower() in ALLOWED_NOTIFICATION_DOMAINS
+
 
 def enviar_correo_html(asunto: str, cuerpo_html: str, destinatario: str = CORREO_NOTIFICACIONES_TI) -> tuple[bool, str]:
     destino = (destinatario or CORREO_NOTIFICACIONES_TI).strip()
-    if "@" not in destino:
-        return False, "Dirección de correo destinataria inválida."
+    if not _validar_destinatario(destino):
+        return False, "Dirección inválida o dominio no autorizado para notificaciones."
 
     token = get_graph_token()
     if not token:
@@ -71,7 +91,8 @@ def construir_html_auditoria(agents_data: list, criterio: str, metricas: dict | 
             f'<p style="color: #8b949e; font-size: 13px;">'
             f'<strong>Total Inventario:</strong> {metricas.get("totalAgentes", 0)} | '
             f'<strong>En Riesgo (≥70):</strong> {metricas.get("agentesEnRiesgo", 0)} | '
-            f'<strong>No Administrados:</strong> {metricas.get("agentesNoAdministrados", 0)}</p>'
+            f'<strong>No Administrados:</strong> {metricas.get("agentesNoAdministrados", 0)}'
+            f' | <strong>Cobertura fuentes:</strong> {html.escape(str(metricas.get("coberturaFuentes", "PARCIAL")))}</p>'
         )
         if metricas.get("coberturaPermisosAplicacion"):
             resumen_html += (
@@ -93,7 +114,7 @@ def construir_html_auditoria(agents_data: list, criterio: str, metricas: dict | 
         '<th style="padding: 12px 10px;">Permiso</th><th style="padding: 12px 10px;">Consentimiento</th><th style="padding: 12px 10px;">Editor</th>'
         f'</tr></thead><tbody>{rows_html}</tbody></table>'
         '<hr style="border: 0; border-top: 1px solid #30363d; margin-top: 24px;"/>'
-        '<p style="font-size: 11px; color: #8b949e; text-align: center;">AGENTE-GOBERNANZA-CORE | Purview DSPM &amp; Defender Cloud Apps | Firma: SIG_GOV_APPROVED_OK</p>'
+        '<p style="font-size: 11px; color: #8b949e; text-align: center;">AGENTE-GOBERNANZA-CORE | Microsoft Graph y snapshot local de Defender | Reporte informativo, no es una firma digital</p>'
         '</div></body></html>'
     )
 
@@ -116,6 +137,6 @@ def construir_html_evento(titulo: str, color_acento: str, badge: str, detalles: 
         '<table style="width: 100%; border-collapse: collapse; margin-top: 16px; background-color: #0d1117; font-size: 13px;">'
         f'<tbody>{filas_html}</tbody></table>'
         '<hr style="border: 0; border-top: 1px solid #30363d; margin-top: 24px;"/>'
-        f'<p style="font-size: 11px; color: #8b949e;">Generado por {FUNCTION_APP_NAME} el {fecha_utc} | Firma: SIG_GOV_APPROVED_OK</p>'
+        f'<p style="font-size: 11px; color: #8b949e;">Generado por {FUNCTION_APP_NAME} el {fecha_utc} | Reporte informativo, no es una firma digital</p>'
         '</div></body></html>'
     )

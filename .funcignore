@@ -1,3 +1,12 @@
+.env*
+*.env
+.venv/
+venv/
+.python_packages/
+local.settings*.json
+README.md
+copilot_studio/
+tests/
 __pycache__/
 *.pyc
 .git/

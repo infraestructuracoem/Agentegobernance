@@ -7,6 +7,7 @@ from urllib3.util.retry import Retry
 from shared.config import TENANT_ID, CLIENT_ID, CLIENT_SECRET
 
 _TOKEN_CACHE = {"access_token": "", "expires_at": 0.0}
+_SCOPED_TOKEN_CACHE = {}
 _TOKEN_LOCK = threading.Lock()
 
 def normalizar_texto(texto: str) -> str:
@@ -44,9 +45,48 @@ def get_graph_token() -> str:
                 _TOKEN_CACHE["access_token"] = token
                 _TOKEN_CACHE["expires_at"] = now + expires_in
                 return token
-        except requests.RequestException:
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
             return ""
     return ""
+
+
+def get_scoped_token(scope: str) -> str:
+    if not TENANT_ID or not CLIENT_ID or not CLIENT_SECRET:
+        return ""
+    now = time.time()
+    cached = _SCOPED_TOKEN_CACHE.get(scope, {})
+    if cached.get("access_token") and now < cached.get("expires_at", 0) - 120:
+        return cached["access_token"]
+
+    with _TOKEN_LOCK:
+        now = time.time()
+        cached = _SCOPED_TOKEN_CACHE.get(scope, {})
+        if cached.get("access_token") and now < cached.get("expires_at", 0) - 120:
+            return cached["access_token"]
+        url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "scope": scope,
+        }
+        try:
+            response = requests.post(url, data=payload, timeout=6)
+            if response.status_code != 200:
+                return ""
+            data = response.json()
+            token = data.get("access_token", "")
+            if not token:
+                return ""
+            expires_in = int(data.get("expires_in", 3599))
+            _SCOPED_TOKEN_CACHE[scope] = {
+                "access_token": token,
+                "expires_at": now + expires_in,
+            }
+            return token
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            return ""
+
 
 def create_concurrent_session(token: str) -> requests.Session:
     session = requests.Session()

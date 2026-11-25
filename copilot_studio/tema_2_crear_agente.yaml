@@ -23,6 +23,13 @@ beginDialog:
       prompt: "Si ya existe en Entra ID, ingresa su Object ID (o escribe 'ninguno' para aprobación previa):"
       entity: StringPrebuiltEntity
 
+    - kind: Question
+      id: pedir_token_aprobacion
+      alwaysPrompt: true
+      variable: Topic.TokenAprobacion
+      prompt: "Para desplegar un agente existente, ingresa el token firmado de aprobación. Para una preaprobación sin Object ID, escribe 'ninguno':"
+      entity: StringPrebuiltEntity
+
     - kind: InvokeConnectorAction
       id: invocar_create_agent
       connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
@@ -33,6 +40,7 @@ beginDialog:
         binding:
           solicitud: =Topic.SolicitudAgente
           agentObjectId: =If(Lower(Trim(Topic.ObjectIdAgente)) = "ninguno", "", Trim(Topic.ObjectIdAgente))
+          approvalToken: =If(Lower(Trim(Topic.ObjectIdAgente)) = "ninguno", "", Trim(Topic.TokenAprobacion))
       output:
         kind: SingleVariableOutputBinding
         variable: Topic.ResCreacion

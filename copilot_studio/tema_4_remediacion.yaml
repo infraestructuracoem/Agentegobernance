@@ -65,6 +65,12 @@ beginDialog:
               id: cancelar_hard_delete
               activity: "Operación cancelada. No se eliminó ningún agente."
       elseActions:
+        - kind: Question
+          id: pedir_token_remediacion
+          alwaysPrompt: true
+          variable: Topic.TokenRemediacion
+          prompt: "Ingresa el token firmado de aprobación para esta acción y este agente:"
+          entity: StringPrebuiltEntity
         - kind: InvokeConnectorAction
           id: invocar_remediacion
           connectionReference: new_AGENTEDEGOBERNANZAAI.shared_ai-20gateway-20gobernanza-20-5f626c20bd67509e27-d8b224eb308a1780.5dc3427ad1b94fd181d6c11ca2f36f2d
@@ -76,6 +82,7 @@ beginDialog:
               botId: =Trim(Topic.IdentificadorAgente)
               tipoAccion: =Topic.TipoAccion
               confirmHardDelete: =Lower(Topic.TipoAccion) = "harddelete" And Lower(Topic.ConfirmarHardDelete) = "confirmar"
+              approvalToken: =Trim(Topic.TokenRemediacion)
           output:
             kind: SingleVariableOutputBinding
             variable: Topic.ResRemediacion

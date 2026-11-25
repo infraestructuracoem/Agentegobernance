@@ -52,11 +52,15 @@ def evaluate_prompt(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps(res, ensure_ascii=False), status_code=200, mimetype="application/json")
 
     res = {
-        "status": "APPROVED",
-        "riskLevel": "LOW",
+        "status": "NEEDS_REVIEW",
+        "riskLevel": "UNASSESSED",
         "userRole": "STANDARD_USER",
-        "message": "Prompt validado correctamente bajo políticas corporativas.",
-        "signature": "SIG_GOV_APPROVED_OK",
-        "respuestaEjecutiva": "ESTADO: APPROVED\nFirma: SIG_GOV_APPROVED_OK\nNivel de riesgo: LOW. Consulta autorizada."
+        "message": "No se detectaron términos de la lista; esto no constituye una aprobación de seguridad.",
+        "signature": None,
+        "respuestaEjecutiva": (
+            "ESTADO: REVISIÓN REQUERIDA\n"
+            "No se detectaron términos coincidentes con la lista de bloqueo. "
+            "La comprobación por palabras clave no evalúa el contexto ni autoriza la solicitud."
+        )
     }
     return func.HttpResponse(json.dumps(res, ensure_ascii=False), status_code=200, mimetype="application/json")

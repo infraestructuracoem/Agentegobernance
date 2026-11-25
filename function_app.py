@@ -1,7 +1,7 @@
 import azure.functions as func
 from blueprints.evaluate_prompt import bp_evaluate
 from blueprints.create_agent import bp_create
-from blueprints.get_full_audit import bp_audit
+from blueprints.audit_endpoint import bp_audit
 from blueprints.execute_remediation import bp_remediation
 from blueprints.send_notification import bp_notification
 
